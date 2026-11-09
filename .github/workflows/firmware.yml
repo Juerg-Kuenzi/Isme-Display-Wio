@@ -45,8 +45,18 @@ jobs:
           arduino-cli compile --fqbn Seeeduino:samd:seeed_wio_terminal --warnings default
           --output-dir build firmware/IsmeDisplay
 
+      # UF2 zum Aufspielen per Drag-and-drop. Der Bootloader des Wio Terminal belegt die ersten 16 KB.
+      - name: UF2-Datei erzeugen
+        run: |
+          curl -fsSLo uf2conv.py https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2conv.py
+          curl -fsSLo uf2families.json https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2families.json
+          python3 uf2conv.py -c -b 0x4000 -f SAMD51 -o build/IsmeDisplay.uf2 build/IsmeDisplay.ino.bin
+          ls -l build
+
       - uses: actions/upload-artifact@v4
         with:
           name: IsmeDisplay-firmware
-          path: build/*.uf2
-          if-no-files-found: warn
+          path: |
+            build/IsmeDisplay.uf2
+            build/IsmeDisplay.ino.bin
+          if-no-files-found: error
