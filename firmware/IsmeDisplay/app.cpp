@@ -36,7 +36,8 @@ WiFiUDP n2kUdp;
 // ---------------------------------------------------------------------------
 // Einstellungen im Flash
 // ---------------------------------------------------------------------------
-const uint32_t SETTINGS_MAGIC = 0x15E00001;
+const uint32_t SETTINGS_MAGIC_V1 = 0x15E00001;   // Firmware 1.0.0, ohne Tonhoehe
+const uint32_t SETTINGS_MAGIC = 0x15E00002;
 
 struct Settings {
     uint32_t magic;
@@ -45,12 +46,18 @@ struct Settings {
     uint16_t alarmLimit;
     uint8_t dark;
     uint8_t reserved;
+    uint16_t toneHz;
 };
 
 Settings settings;
 
 void loadSettings() {
     EEPROM.get(0, settings);
+    if (settings.magic == SETTINGS_MAGIC_V1) {
+        settings.magic = SETTINGS_MAGIC;
+        settings.toneHz = TONE_DEFAULT_HZ;
+    }
+    if (settings.toneHz < TONE_MIN_HZ || settings.toneHz > TONE_MAX_HZ) settings.toneHz = TONE_DEFAULT_HZ;
     if (settings.magic != SETTINGS_MAGIC) {
         settings.magic = SETTINGS_MAGIC;
         settings.chainPort = DEFAULT_CHAIN_PORT;
@@ -58,6 +65,7 @@ void loadSettings() {
         settings.alarmLimit = DEFAULT_ALARM_LIMIT;
         settings.dark = 0;
         settings.reserved = 0;
+        settings.toneHz = TONE_DEFAULT_HZ;
     }
 }
 
@@ -229,12 +237,13 @@ enum class UiScreen { Main, Menu, Detail, Info };
 
 enum Item {
     ITEM_DARK, ITEM_ZERO, ITEM_LENGTH, ITEM_PORT, ITEM_DEBOUNCE, ITEM_FACTOR, ITEM_RESTART,
-    ITEM_N2K_PORT, ITEM_ALARM, ITEM_INFO, ITEM_COUNT
+    ITEM_N2K_PORT, ITEM_ALARM, ITEM_TONE, ITEM_INFO, ITEM_COUNT
 };
 
 const char* const ITEM_LABELS[ITEM_COUNT] = {
     "Hell/Dunkel", "Zähler nullen", "Länge setzen", "Port ChainCounter", "Entprellzeit",
-    "Umrechnungsfaktor", "Restart", "Port NMEA2000", "Alarmwert Abgas", "Informationen",
+    "Umrechnungsfaktor", "Restart", "Port NMEA2000", "Alarmwert Abgas", "Ton testen",
+    "Informationen",
 };
 
 const char* const ITEM_TEXT[ITEM_COUNT] = {
@@ -247,6 +256,7 @@ const char* const ITEM_TEXT[ITEM_COUNT] = {
     "Das Gerät speichert seine Daten und startet neu. Dafür braucht es Firmware 1.2.0.",
     "Port, auf dem die NMEA2000-Bridge (YDWG-02) im RAW-Format sendet.",
     "Darüber gibt es Alarm mit Ton. Der Alarm endet 1 °C unter dem Alarmwert.",
+    "Spielt den Alarmton. Stell die Tonhöhe so ein, dass er am lautesten ist.",
     "",
 };
 
@@ -254,6 +264,7 @@ UiScreen screen = UiScreen::Main;
 int page = 0;          // 0 Ankerkette, 1 NMEA2000
 int menuIndex = 0;
 Item detailItem = ITEM_ZERO;
+uint16_t testToneHz = TONE_DEFAULT_HZ;   // Tonhoehe auf der Seite "Ton testen"
 
 void formatIp(char* out, size_t size, const IPAddress& ip) {
     snprintf(out, size, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
@@ -310,7 +321,9 @@ bool itemHasEditor(Item item) {
 }
 
 // Einstellungen, die nur das Display betreffen und nichts ans Geraet senden
-bool itemIsLocal(Item item) { return item == ITEM_PORT || item == ITEM_N2K_PORT || item == ITEM_ALARM; }
+bool itemIsLocal(Item item) {
+    return item == ITEM_PORT || item == ITEM_N2K_PORT || item == ITEM_ALARM || item == ITEM_TONE;
+}
 
 // ---------------------------------------------------------------------------
 // WLAN und UDP
@@ -409,19 +422,44 @@ void sendCommand(Command command, long value, const char* sentMessage) {
 // ---------------------------------------------------------------------------
 // Alarmton
 // ---------------------------------------------------------------------------
-bool toneOn = false;
-uint32_t toneStartedAt = 0;
+// Muster: hoch, tief, hoch, tief, Pause. Zusammen 2 s.
+const uint8_t TONE_STEPS = 5;
+const uint16_t TONE_STEP_MS[TONE_STEPS] = {200, 200, 200, 200, 1200};
+const uint8_t TONE_STEP_KIND[TONE_STEPS] = {2, 1, 2, 1, 0};   // 2 hoch, 1 tief, 0 still
+
+bool tonePlaying = false;
+uint8_t toneStep = 0;
+uint32_t toneStepAt = 0;
+
+bool toneTesting() { return screen == UiScreen::Detail && detailItem == ITEM_TONE; }
+
+void playToneStep() {
+    uint16_t hz = toneTesting() ? testToneHz : settings.toneHz;
+    switch (TONE_STEP_KIND[toneStep]) {
+        case 2: tone(WIO_BUZZER, hz); break;
+        case 1: tone(WIO_BUZZER, static_cast<unsigned int>(hz) * TONE_LOW_PERCENT / 100); break;
+        default: noTone(WIO_BUZZER); break;
+    }
+}
 
 void serviceBuzzer(uint32_t now) {
-    bool wanted = exhaust.toneWanted();
-    if (toneOn && (!wanted || now - toneStartedAt >= TONE_DURATION_MS)) {
-        analogWrite(WIO_BUZZER, 0);
-        toneOn = false;
+    bool wanted = exhaust.toneWanted() || toneTesting();
+    if (!wanted) {
+        if (tonePlaying) {
+            noTone(WIO_BUZZER);
+            tonePlaying = false;
+        }
+        return;
     }
-    if (wanted && !toneOn && now - toneStartedAt >= TONE_INTERVAL_MS) {
-        analogWrite(WIO_BUZZER, BUZZER_DUTY);
-        toneOn = true;
-        toneStartedAt = now;
+    if (!tonePlaying) {
+        tonePlaying = true;
+        toneStep = 0;
+        toneStepAt = now;
+        playToneStep();
+    } else if (now - toneStepAt >= TONE_STEP_MS[toneStep]) {
+        toneStep = (toneStep + 1) % TONE_STEPS;
+        toneStepAt = now;
+        playToneStep();
     }
 }
 
@@ -430,8 +468,8 @@ void serviceBuzzer(uint32_t now) {
 // ---------------------------------------------------------------------------
 enum Region {
     R_TITLE, R_LENGTH, R_DIRECTION, R_VCC, R_BOTTOM, R_EXHAUST, R_LIMIT,
-    R_ROW0,   // R_ROW0 .. R_ROW0 + 9 fuer Menue- und Infozeilen
-    R_DETAIL_CURRENT = R_ROW0 + 10, R_EDITOR, R_MESSAGE, R_STATUS, R_HINT
+    R_ROW0,   // R_ROW0 .. R_ROW0 + 11 fuer Menue- und Infozeilen
+    R_DETAIL_CURRENT = R_ROW0 + 12, R_EDITOR, R_MESSAGE, R_STATUS, R_HINT
 };
 
 void titleBar(const char* title, bool dots) {
@@ -618,15 +656,17 @@ void renderMenu() {
     if (fullRedraw) titleBar("Einstellungen", false);
     for (int i = 0; i < ITEM_COUNT; i++) {
         bool sel = i == menuIndex;
-        const char* value = i == ITEM_DARK ? (settings.dark ? "Dunkel" : "Hell") : "";
+        char tone[12];
+        snprintf(tone, sizeof(tone), "%u Hz", settings.toneHz);
+        const char* value = i == ITEM_DARK ? (settings.dark ? "Dunkel" : "Hell") : i == ITEM_TONE ? tone : "";
         char sig[64];
         snprintf(sig, sizeof(sig), "%d|%s", sel, value);
         if (!changed(R_ROW0 + i, sig)) continue;
-        int y = 36 + i * 18;
+        int y = 35 + i * 16;
         uint16_t bg = sel ? pal.ink : pal.bg, fg = sel ? pal.bg : pal.ink;
-        tft.fillRect(0, y, 320, 18, bg);
-        drawText(ITEM_LABELS[i], 12, y + 1, 2, fg, bg, ALIGN_LEFT);
-        if (*value) drawText(value, 308, y + 1, 2, fg, bg, ALIGN_RIGHT);
+        tft.fillRect(0, y, 320, 16, bg);
+        drawText(ITEM_LABELS[i], 12, y, 2, fg, bg, ALIGN_LEFT);
+        if (*value) drawText(value, 308, y, 2, fg, bg, ALIGN_RIGHT);
     }
     footer("Drücken: öffnen   Taste links: zurück");
 }
@@ -705,6 +745,12 @@ void renderDetail(uint32_t now) {
             }
             drawText(editor.unit, x + 6, 114, 4, pal.ink, pal.bg, ALIGN_LEFT);
         }
+    } else if (item == ITEM_TONE) {
+        snprintf(sig, sizeof(sig), "%u Hz", testToneHz);
+        if (changed(R_EDITOR, sig)) {
+            tft.fillRect(0, 112, 320, 36, pal.bg);
+            drawText(sig, 8, 114, 4, pal.ink, pal.bg, ALIGN_LEFT);
+        }
     } else if (changed(R_EDITOR, "action")) {
         tft.fillRect(0, 112, 320, 36, pal.bg);
     }
@@ -732,7 +778,8 @@ void renderDetail(uint32_t now) {
         if (kind) drawText(w, 8, 194, 2, kind == 1 ? pal.onWarning : pal.ink, bg, ALIGN_LEFT);
     }
 
-    footer(itemIsLocal(item) ? "Drücken: speichern   Taste links: zurück" : "Drücken: senden   Taste links: zurück");
+    if (item == ITEM_TONE) footer("Auf/ab: Tonhöhe   Drücken: speichern");
+    else footer(itemIsLocal(item) ? "Drücken: speichern   Taste links: zurück" : "Drücken: senden   Taste links: zurück");
 }
 
 void render(uint32_t now) {
@@ -811,6 +858,7 @@ void openDetail(Item item) {
         case ITEM_DEBOUNCE: setEditor(10, 4, 0, "ms"); break;
         case ITEM_FACTOR: setEditor(4000, 7, 4, "m/U"); break;
         case ITEM_ALARM: setEditor(settings.alarmLimit, 3, 0, "°C"); break;
+        case ITEM_TONE: testToneHz = settings.toneHz; break;
         default: break;
     }
     show(UiScreen::Detail);
@@ -878,6 +926,11 @@ void submitDetail() {
             saveSettings();
             snprintf(messages[detailItem], sizeof(messages[0]), "Alarmwert %ld °C gespeichert.", v);
             break;
+        case ITEM_TONE:
+            settings.toneHz = testToneHz;
+            saveSettings();
+            snprintf(messages[detailItem], sizeof(messages[0]), "Tonhöhe %u Hz gespeichert.", testToneHz);
+            break;
         default: break;
     }
 }
@@ -913,6 +966,13 @@ void handleKey(int key) {
         case UiScreen::Detail:
             if (key == K_MENU) { show(UiScreen::Menu); break; }
             if (key == K_PRESS) { submitDetail(); break; }
+            if (detailItem == ITEM_TONE) {
+                if (key == K_UP && testToneHz + TONE_STEP_HZ <= TONE_MAX_HZ) testToneHz += TONE_STEP_HZ;
+                if (key == K_DOWN && testToneHz - TONE_STEP_HZ >= TONE_MIN_HZ) testToneHz -= TONE_STEP_HZ;
+                if (key == K_UP || key == K_DOWN) messages[ITEM_TONE][0] = 0;
+                if (key == K_LEFT) show(UiScreen::Menu);
+                break;
+            }
             if (!itemHasEditor(detailItem)) {
                 if (key == K_LEFT) show(UiScreen::Menu);
                 break;
@@ -937,7 +997,7 @@ void appSetup() {
     Serial.begin(115200);
     for (int i = 0; i < K_COUNT; i++) pinMode(keys[i].pin, INPUT_PULLUP);
     pinMode(WIO_BUZZER, OUTPUT);
-    analogWrite(WIO_BUZZER, 0);
+    noTone(WIO_BUZZER);
     loadSettings();
     tft.begin();
     tft.setRotation(3);
