@@ -1,0 +1,4 @@
+# WLAN-Zugangsdaten, nie einchecken
+firmware/IsmeDisplay/secrets.h
+build/
+tests/host/test_core
