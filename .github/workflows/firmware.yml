@@ -47,9 +47,12 @@ jobs:
 
       # UF2 zum Aufspielen per Drag-and-drop. Der Bootloader des Wio Terminal belegt die ersten 16 KB.
       - name: UF2-Datei erzeugen
+        env:
+          # Fester Stand von microsoft/uf2. Der Stand auf master hatte am 9.11.2026 ein ungueltiges uf2families.json.
+          UF2_COMMIT: cf3bd7f9c274b949528f8cd6a19eef2502a687d2
         run: |
-          curl -fsSLo uf2conv.py https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2conv.py
-          curl -fsSLo uf2families.json https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2families.json
+          curl -fsSLo uf2conv.py https://raw.githubusercontent.com/microsoft/uf2/${UF2_COMMIT}/utils/uf2conv.py
+          curl -fsSLo uf2families.json https://raw.githubusercontent.com/microsoft/uf2/${UF2_COMMIT}/utils/uf2families.json
           python3 uf2conv.py -c -b 0x4000 -f SAMD51 -o build/IsmeDisplay.uf2 build/IsmeDisplay.ino.bin
           ls -l build
 
