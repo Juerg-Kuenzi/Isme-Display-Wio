@@ -428,17 +428,30 @@ const uint16_t TONE_STEP_MS[TONE_STEPS] = {200, 200, 200, 200, 1200};
 const uint8_t TONE_STEP_KIND[TONE_STEPS] = {2, 1, 2, 1, 0};   // 2 hoch, 1 tief, 0 still
 
 bool tonePlaying = false;
+bool toneTimerStarted = false;   // erst nach dem ersten tone() darf noTone() aufgerufen werden
 uint8_t toneStep = 0;
 uint32_t toneStepAt = 0;
 
 bool toneTesting() { return screen == UiScreen::Detail && detailItem == ITEM_TONE; }
 
+// noTone() wartet im Seeed-Kern auf den Timer von tone(). Laeuft dieser noch nie,
+// haengt der Aufruf fuer immer. Deshalb vor dem ersten tone() nur den Pin auf LOW setzen.
+void stopTone() {
+    if (toneTimerStarted) noTone(WIO_BUZZER);
+    else digitalWrite(WIO_BUZZER, LOW);
+}
+
+void startTone(unsigned int hz) {
+    tone(WIO_BUZZER, hz);
+    toneTimerStarted = true;
+}
+
 void playToneStep() {
     uint16_t hz = toneTesting() ? testToneHz : settings.toneHz;
     switch (TONE_STEP_KIND[toneStep]) {
-        case 2: tone(WIO_BUZZER, hz); break;
-        case 1: tone(WIO_BUZZER, static_cast<unsigned int>(hz) * TONE_LOW_PERCENT / 100); break;
-        default: noTone(WIO_BUZZER); break;
+        case 2: startTone(hz); break;
+        case 1: startTone(static_cast<unsigned int>(hz) * TONE_LOW_PERCENT / 100); break;
+        default: stopTone(); break;
     }
 }
 
@@ -446,7 +459,7 @@ void serviceBuzzer(uint32_t now) {
     bool wanted = exhaust.toneWanted() || toneTesting();
     if (!wanted) {
         if (tonePlaying) {
-            noTone(WIO_BUZZER);
+            stopTone();
             tonePlaying = false;
         }
         return;
@@ -997,7 +1010,7 @@ void appSetup() {
     Serial.begin(115200);
     for (int i = 0; i < K_COUNT; i++) pinMode(keys[i].pin, INPUT_PULLUP);
     pinMode(WIO_BUZZER, OUTPUT);
-    noTone(WIO_BUZZER);
+    digitalWrite(WIO_BUZZER, LOW);   // nicht noTone(), siehe stopTone()
     loadSettings();
     tft.begin();
     tft.setRotation(3);
