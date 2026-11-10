@@ -133,6 +133,33 @@ static void testChain() {
     f.onData(d, 0); f.onTick(5000); f.forget(); f.onData(d, 6000); CHECK(!f.receptionRestored());
 }
 
+static void testClock() {
+    // Frame aus dem Mitschnitt: GPS an Adresse 0x96, 9.11.2026 01:37:47.799 UTC
+    CanFrame f = frame("01:36:47.799 R 0DF01096 FF FF 1E 51 E6 5A 7F 03");
+    CHECK(f.pgn == PGN_SYSTEM_TIME && f.source == 0x96);
+    uint32_t days = 0, t = 0;
+    CHECK(decodeSystemTime(f.data, f.length, days, t));
+    CHECK(days == 20766 && t == 58677990u);
+    const uint8_t na[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    CHECK(!decodeSystemTime(na, 8, days, t));
+
+    BusClock c;
+    CHECK(!c.hasTime() && !c.isFresh(0));
+    c.onTime(20766, 58677990u, 1000);
+    char b[32];
+    formatUtcDateTime(b, sizeof(b), c.utcMillis(1000)); CHECK(strcmp(b, "2026-11-09 01:37:47") == 0);
+    formatClock(b, sizeof(b), c.utcMillis(1000), 0); CHECK(strcmp(b, "01:37") == 0);
+    formatClock(b, sizeof(b), c.utcMillis(1000), -3); CHECK(strcmp(b, "22:37") == 0);    // Vortag
+    formatClock(b, sizeof(b), c.utcMillis(1000), 14); CHECK(strcmp(b, "15:37") == 0);
+    formatClock(b, sizeof(b), c.utcMillis(1000 + 13 * 60000), 2); CHECK(strcmp(b, "03:50") == 0);   // fortgeschrieben
+    CHECK(c.isFresh(10999) && !c.isFresh(11000));
+    formatUtcDateTime(b, sizeof(b), 951782400000ULL); CHECK(strcmp(b, "2000-02-29 00:00:00") == 0);
+    formatUtcDateTime(b, sizeof(b), 0); CHECK(strcmp(b, "1970-01-01 00:00:00") == 0);
+    formatUtcOffset(b, sizeof(b), 2); CHECK(strcmp(b, "UTC+2") == 0);
+    formatUtcOffset(b, sizeof(b), -12); CHECK(strcmp(b, "UTC-12") == 0);
+    formatUtcOffset(b, sizeof(b), 0); CHECK(strcmp(b, "UTC+0") == 0);
+}
+
 static void testFormat() {
     char b[24];
     formatOneDecimal(b, sizeof(b), 12.4f); CHECK(strcmp(b, "12.4") == 0);
@@ -145,7 +172,7 @@ static void testFormat() {
 }
 
 int main() {
-    testWindlass(); testCommands(); testYdRaw(); testExhaust(); testChain(); testFormat();
+    testWindlass(); testCommands(); testYdRaw(); testExhaust(); testChain(); testClock(); testFormat();
     if (failures) { printf("%d Fehler\n", failures); return 1; }
     printf("ALLE TESTS OK\n");
     return 0;

@@ -5,13 +5,14 @@ Firmware für das Seeed Wio Terminal als fest eingebaute Anzeige an Bord der Ism
 ## Funktionen
 
 - **Seite Ankerkette:** Kettenlänge, Richtung (Auf oder Ab) und Speisung vom [ChainCounter](https://github.com/Juerg-Kuenzi/ChainCounter). Kommt 3 s lang kein gültiger Satz, wird die Länge abgeblendet und unten erscheint eine Warnung.
-- **Seite NMEA2000:** Abgastemperatur von der YDWG-02 (PGN 130316, ersatzweise 130312, Quelle 14) und der Alarmwert. Kommt 6 s lang kein Wert, erscheint eine Warnung.
-- **Abgasalarm:** Über dem Alarmwert (Standard 50 °C) erscheint ein Alarmbalken auf jeder Seite, und der Summer gibt alle 2 s viermal abwechselnd einen hohen und einen tiefen Ton. Die Taste rechts schaltet den Ton bis zum nächsten Alarm aus. Der Alarm endet 1 °C unter dem Alarmwert.
+- **Seite NMEA2000:** Abgastemperatur von der YDWG-02 (PGN 130316, ersatzweise 130312, Quelle 14) mit dem Alarmwert, darunter gleich gross die Ortszeit. Kommt 6 s lang keine Temperatur oder 10 s lang keine Zeit, wird der Wert abgeblendet und unten erscheint eine Warnung.
+- **Ortszeit:** UTC aus PGN 126992 „System Time“ vom GPS, plus die eingestellte Zeitzone (UTC−12 bis UTC+14, ganze Stunden, Standard UTC+0). Zwischen zwei Meldungen läuft die Uhr mit der internen Zeit weiter.
+- **Abgasalarm:** Über dem Alarmwert (Standard 50 °C) erscheint ein Alarmbalken auf jeder Seite, und der Summer gibt alle 2 s vier kurze Töne auf der eingestellten Tonhöhe. Die Taste rechts schaltet den Ton bis zum nächsten Alarm aus. Der Alarm endet 1 °C unter dem Alarmwert.
 - **Ton testen:** Ein Piezo-Summer ist bei seiner Resonanzfrequenz am lautesten. Unter *Einstellungen > Ton testen* spielt der Alarmton, und mit dem Joystick auf/ab lässt sich die Tonhöhe in Schritten von 100 Hz zwischen 500 und 5000 Hz verstellen (Standard 2700 Hz). Drücken speichert die lauteste Einstellung.
-- **Einstellungen:** Hell/Dunkel, Zähler nullen, Länge setzen, Port ChainCounter, Entprellzeit, Umrechnungsfaktor, Restart, Port NMEA2000, Alarmwert Abgas, Ton testen, Informationen. Factory Reset ist bewusst nicht enthalten.
+- **Einstellungen:** Hell/Dunkel, Zähler nullen, Länge setzen, Port ChainCounter, Entprellzeit, Umrechnungsfaktor, Restart, Port NMEA2000, Alarmwert Abgas, Ton testen, Zeitzone, Informationen. Die Liste scrollt mit der Auswahl. Factory Reset ist bewusst nicht enthalten.
 - **Dunkel:** rote Anzeige auf Schwarz, damit die Nachtsicht erhalten bleibt.
 
-Ports, Alarmwert, Tonhöhe und Hell/Dunkel werden im Flash gespeichert und überleben einen Neustart. Standardwerte: ChainCounter 1458, NMEA2000 1457, Alarm 50 °C (`config.h`).
+Ports, Alarmwert, Tonhöhe, Zeitzone und Hell/Dunkel werden im Flash gespeichert und überleben einen Neustart. Standardwerte: ChainCounter 1458, NMEA2000 1457, Alarm 50 °C (`config.h`).
 
 ## Bedienung
 
@@ -31,6 +32,8 @@ Die drei Tasten oben sind von links nach rechts C, B und A.
 | Wert ändern | Taste links (C) | zurück zu den Einstellungen |
 | Ton testen | Joystick auf/ab | Tonhöhe ändern |
 | Ton testen | Joystick drücken | Tonhöhe speichern |
+| Zeitzone | Joystick auf/ab | eine Stunde mehr oder weniger, mit Vorschau der Ortszeit |
+| Zeitzone | Joystick drücken | Zeitzone speichern |
 
 Die Tastenbelegung lässt sich in `app.cpp` mit `KEY_MENU` und `KEY_MUTE` ändern.
 

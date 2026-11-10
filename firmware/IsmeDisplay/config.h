@@ -1,6 +1,6 @@
 #pragma once
 
-#define FW_VERSION              "1.1.1"
+#define FW_VERSION              "1.2.0"
 
 // Standardwerte. Die Einstellungen am Geraet werden im Flash gespeichert.
 #define DEFAULT_CHAIN_PORT      1458    // ChainCounter, Spezifikation V1.7
@@ -14,4 +14,4 @@
 #define TONE_MIN_HZ             500
 #define TONE_MAX_HZ             5000
 #define TONE_STEP_HZ            100
-#define TONE_LOW_PERCENT        85      // tiefer Ton im Wechsel: 85 % der hohen Frequenz
+#define DEFAULT_UTC_OFFSET      0       // Zeitzone in Stunden, UTC-12 bis UTC+14
