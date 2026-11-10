@@ -45,7 +45,7 @@ struct Settings {
     uint16_t n2kPort;
     uint16_t alarmLimit;
     uint8_t dark;
-    uint8_t reserved;
+    int8_t utcOffset;   // bis 1.1.1 reserviert und 0
     uint16_t toneHz;
 };
 
@@ -57,6 +57,7 @@ void loadSettings() {
         settings.magic = SETTINGS_MAGIC;
         settings.toneHz = TONE_DEFAULT_HZ;
     }
+    if (settings.utcOffset < UTC_OFFSET_MIN || settings.utcOffset > UTC_OFFSET_MAX) settings.utcOffset = DEFAULT_UTC_OFFSET;
     if (settings.toneHz < TONE_MIN_HZ || settings.toneHz > TONE_MAX_HZ) settings.toneHz = TONE_DEFAULT_HZ;
     if (settings.magic != SETTINGS_MAGIC) {
         settings.magic = SETTINGS_MAGIC;
@@ -64,7 +65,7 @@ void loadSettings() {
         settings.n2kPort = DEFAULT_N2K_PORT;
         settings.alarmLimit = DEFAULT_ALARM_LIMIT;
         settings.dark = 0;
-        settings.reserved = 0;
+        settings.utcOffset = DEFAULT_UTC_OFFSET;
         settings.toneHz = TONE_DEFAULT_HZ;
     }
 }
@@ -216,7 +217,7 @@ int drawWrapped(const char* text, int x, int y, int width, int font, uint16_t fg
 }
 
 // Bereiche nur neu zeichnen, wenn sich ihr Inhalt geaendert hat.
-const int REGIONS = 24;
+const int REGIONS = 32;
 char regionCache[REGIONS][96];
 
 bool changed(int region, const char* signature) {
@@ -237,13 +238,13 @@ enum class UiScreen { Main, Menu, Detail, Info };
 
 enum Item {
     ITEM_DARK, ITEM_ZERO, ITEM_LENGTH, ITEM_PORT, ITEM_DEBOUNCE, ITEM_FACTOR, ITEM_RESTART,
-    ITEM_N2K_PORT, ITEM_ALARM, ITEM_TONE, ITEM_INFO, ITEM_COUNT
+    ITEM_N2K_PORT, ITEM_ALARM, ITEM_TONE, ITEM_TIMEZONE, ITEM_INFO, ITEM_COUNT
 };
 
 const char* const ITEM_LABELS[ITEM_COUNT] = {
     "Hell/Dunkel", "Zähler nullen", "Länge setzen", "Port ChainCounter", "Entprellzeit",
     "Umrechnungsfaktor", "Restart", "Port NMEA2000", "Alarmwert Abgas", "Ton testen",
-    "Informationen",
+    "Zeitzone", "Informationen",
 };
 
 const char* const ITEM_TEXT[ITEM_COUNT] = {
@@ -257,6 +258,7 @@ const char* const ITEM_TEXT[ITEM_COUNT] = {
     "Port, auf dem die NMEA2000-Bridge (YDWG-02) im RAW-Format sendet.",
     "Darüber gibt es Alarm mit Ton. Der Alarm endet 1 °C unter dem Alarmwert.",
     "Spielt den Alarmton. Stell die Tonhöhe so ein, dass er am lautesten ist.",
+    "Die Ortszeit ist die UTC-Zeit vom GPS (NMEA2000) plus diese Zahl von Stunden.",
     "",
 };
 
@@ -265,6 +267,7 @@ int page = 0;          // 0 Ankerkette, 1 NMEA2000
 int menuIndex = 0;
 Item detailItem = ITEM_ZERO;
 uint16_t testToneHz = TONE_DEFAULT_HZ;   // Tonhoehe auf der Seite "Ton testen"
+int testUtcOffset = 0;                   // Zeitzone auf der Seite "Zeitzone"
 
 void formatIp(char* out, size_t size, const IPAddress& ip) {
     snprintf(out, size, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
@@ -275,6 +278,7 @@ ChainState chain;
 ExhaustMonitor exhaust;
 TemperatureSelector exhaustSelector(SOURCE_EXHAUST_GAS, 0, 6000);
 DuplicateFilter n2kDuplicates(50);
+BusClock busClock;
 IPAddress deviceIp;
 bool deviceKnown = false;
 IPAddress bridgeIp;
@@ -322,7 +326,8 @@ bool itemHasEditor(Item item) {
 
 // Einstellungen, die nur das Display betreffen und nichts ans Geraet senden
 bool itemIsLocal(Item item) {
-    return item == ITEM_PORT || item == ITEM_N2K_PORT || item == ITEM_ALARM || item == ITEM_TONE;
+    return item == ITEM_PORT || item == ITEM_N2K_PORT || item == ITEM_ALARM || item == ITEM_TONE ||
+           item == ITEM_TIMEZONE;
 }
 
 // ---------------------------------------------------------------------------
@@ -381,8 +386,11 @@ void handleN2kPacket(const char* text, int len, IPAddress sender, uint32_t now) 
         if (i == len || text[i] == '\n') {
             CanFrame frame;
             float celsius;
-            if (parseYdRawLine(text + start, i - start, frame) && exhaustSelector.onFrame(frame, now, celsius)) {
-                exhaust.onReading(celsius, now);
+            if (parseYdRawLine(text + start, i - start, frame)) {
+                uint32_t days, tenthMillis;
+                if (exhaustSelector.onFrame(frame, now, celsius)) exhaust.onReading(celsius, now);
+                else if (frame.pgn == PGN_SYSTEM_TIME && decodeSystemTime(frame.data, frame.length, days, tenthMillis))
+                    busClock.onTime(days, tenthMillis, now);
             }
             start = i + 1;
         }
@@ -422,10 +430,10 @@ void sendCommand(Command command, long value, const char* sentMessage) {
 // ---------------------------------------------------------------------------
 // Alarmton
 // ---------------------------------------------------------------------------
-// Muster: hoch, tief, hoch, tief, Pause. Zusammen 2 s.
-const uint8_t TONE_STEPS = 5;
-const uint16_t TONE_STEP_MS[TONE_STEPS] = {200, 200, 200, 200, 1200};
-const uint8_t TONE_STEP_KIND[TONE_STEPS] = {2, 1, 2, 1, 0};   // 2 hoch, 1 tief, 0 still
+// Muster: vier gleiche Toene auf der eingestellten Frequenz, dann Pause. Zusammen 2 s.
+const uint8_t TONE_STEPS = 8;
+const uint16_t TONE_STEP_MS[TONE_STEPS] = {150, 100, 150, 100, 150, 100, 150, 1100};
+const bool TONE_STEP_ON[TONE_STEPS] = {true, false, true, false, true, false, true, false};
 
 bool tonePlaying = false;
 bool toneTimerStarted = false;   // erst nach dem ersten tone() darf noTone() aufgerufen werden
@@ -448,11 +456,8 @@ void startTone(unsigned int hz) {
 
 void playToneStep() {
     uint16_t hz = toneTesting() ? testToneHz : settings.toneHz;
-    switch (TONE_STEP_KIND[toneStep]) {
-        case 2: startTone(hz); break;
-        case 1: startTone(static_cast<unsigned int>(hz) * TONE_LOW_PERCENT / 100); break;
-        default: stopTone(); break;
-    }
+    if (TONE_STEP_ON[toneStep]) startTone(hz);
+    else stopTone();
 }
 
 void serviceBuzzer(uint32_t now) {
@@ -480,7 +485,7 @@ void serviceBuzzer(uint32_t now) {
 // Zeichnen
 // ---------------------------------------------------------------------------
 enum Region {
-    R_TITLE, R_LENGTH, R_DIRECTION, R_VCC, R_BOTTOM, R_EXHAUST, R_LIMIT,
+    R_TITLE, R_LENGTH, R_DIRECTION, R_VCC, R_BOTTOM, R_EXHAUST, R_LIMIT, R_CLOCK_LABEL, R_CLOCK,
     R_ROW0,   // R_ROW0 .. R_ROW0 + 11 fuer Menue- und Infozeilen
     R_DETAIL_CURRENT = R_ROW0 + 12, R_EDITOR, R_MESSAGE, R_STATUS, R_HINT
 };
@@ -512,8 +517,17 @@ const char* n2kWarning(uint32_t now, char* buf, size_t size) {
     if (!wifiConnected) snprintf(buf, size, "Keine WLAN-Verbindung.");
     else if (exhaust.hasValue()) snprintf(buf, size, "Keine Abgastemperatur seit %lu s.",
                                           static_cast<unsigned long>(exhaust.secondsSinceData(now)));
-    else if (bridgeKnown) snprintf(buf, size, "Die Bridge sendet, aber der Abgassensor meldet sich nicht.");
+    else if (bridgeKnown) snprintf(buf, size, "Der Abgassensor meldet sich nicht.");
     else snprintf(buf, size, "Warte auf Daten auf Port %u.", settings.n2kPort);
+    return buf;
+}
+
+// Nur wenn die Bridge sendet, aber die Zeit fehlt. Sonst sagt n2kWarning() schon, warum nichts kommt.
+const char* clockWarning(uint32_t now, char* buf, size_t size) {
+    if (busClock.isFresh(now) || !wifiConnected || !bridgeKnown) return nullptr;
+    if (busClock.hasTime()) snprintf(buf, size, "Keine Zeit vom GPS seit %lu s.",
+                                     static_cast<unsigned long>(busClock.secondsSinceData(now)));
+    else snprintf(buf, size, "Keine Zeit vom GPS.");
     return buf;
 }
 
@@ -601,50 +615,62 @@ void renderChainPage(uint32_t now) {
 void renderN2kPage(uint32_t now) {
     if (fullRedraw) {
         titleBar("NMEA2000", true);
-        drawText("Abgastemperatur", 8, 42, 2, pal.muted, pal.bg, ALIGN_LEFT);
-        drawText("°C", 268, 62 + 48 - 26, 4, pal.ink, pal.bg, ALIGN_LEFT);
-        tft.drawFastHLine(0, 120, 320, pal.rule);
-        drawText("Alarmwert", 8, 132, 2, pal.muted, pal.bg, ALIGN_LEFT);
-        tft.drawFastHLine(0, 158, 320, pal.rule);
+        drawText("Abgastemperatur", 8, 38, 2, pal.muted, pal.bg, ALIGN_LEFT);
+        drawText("°C", 268, 56 + 48 - 26, 4, pal.ink, pal.bg, ALIGN_LEFT);
+        tft.drawFastHLine(0, 110, 320, pal.rule);
+        tft.drawFastHLine(0, 188, 320, pal.rule);
     }
     bool fresh = exhaust.isFresh(now);
     char s[48], sig[120];
     if (exhaust.hasValue()) formatOneDecimal(s, sizeof(s), exhaust.celsius());
     else snprintf(s, sizeof(s), "-");
     snprintf(sig, sizeof(sig), "%s|%d", s, fresh);
-    if (changed(R_EXHAUST, sig)) bigNumber(s, 262, 62, 48, 7, fresh ? pal.ink : pal.muted);
+    if (changed(R_EXHAUST, sig)) bigNumber(s, 262, 56, 48, 7, fresh ? pal.ink : pal.muted);
 
-    snprintf(s, sizeof(s), "%u °C", settings.alarmLimit);
+    snprintf(s, sizeof(s), "Alarm ab %u °C", settings.alarmLimit);
     if (changed(R_LIMIT, s)) {
-        tft.fillRect(150, 124, 170, 30, pal.bg);
-        drawText(s, 312, 126, 4, pal.ink, pal.bg, ALIGN_RIGHT);
+        tft.fillRect(160, 36, 160, 18, pal.bg);
+        drawText(s, 312, 38, 2, pal.muted, pal.bg, ALIGN_RIGHT);
     }
 
-    char l1[72] = "", l2[72] = "", l3[72] = "", w[72];
+    // Ortszeit aus der UTC-Zeit vom GPS, gleich gross wie die Temperatur
+    char tz[12];
+    formatUtcOffset(tz, sizeof(tz), settings.utcOffset);
+    snprintf(s, sizeof(s), "Ortszeit %s", tz);
+    if (changed(R_CLOCK_LABEL, s)) {
+        tft.fillRect(0, 114, 320, 18, pal.bg);
+        drawText(s, 8, 116, 2, pal.muted, pal.bg, ALIGN_LEFT);
+    }
+    bool clockFresh = busClock.isFresh(now);
+    if (busClock.hasTime()) formatClock(s, sizeof(s), busClock.utcMillis(now), settings.utcOffset);
+    else snprintf(s, sizeof(s), "--:--");
+    snprintf(sig, sizeof(sig), "%s|%d", s, clockFresh);
+    if (changed(R_CLOCK, sig)) bigNumber(s, 262, 134, 48, 7, clockFresh ? pal.ink : pal.muted);
+
+    // Unten: Alarm hat Vorrang, sonst bis zu zwei Warnungen
+    char l1[72] = "", l2[72] = "", w[72];
     bool warning = false;
     if (exhaust.alarmActive()) {
-        char t[16];
-        formatOneDecimal(t, sizeof(t), exhaust.celsius());
-        snprintf(l1, sizeof(l1), "Abgastemperatur %s °C", t);
-        snprintf(l2, sizeof(l2), "über dem Alarmwert %u °C", settings.alarmLimit);
-        if (!exhaust.muted()) snprintf(l3, sizeof(l3), "Taste rechts: Ton aus");
+        alarmLine(l1, sizeof(l1));
+        if (!exhaust.muted()) snprintf(l2, sizeof(l2), "Taste rechts: Ton aus");
         warning = true;
-    } else if (n2kWarning(now, w, sizeof(w))) {
-        snprintf(l1, sizeof(l1), "%s", w);
-        warning = true;
+    } else {
+        if (n2kWarning(now, w, sizeof(w))) {
+            snprintf(l1, sizeof(l1), "%s", w);
+            warning = true;
+        }
+        if (clockWarning(now, w, sizeof(w))) {
+            snprintf(l1[0] ? l2 : l1, sizeof(l1), "%s", w);
+            warning = true;
+        }
     }
-    snprintf(sig, sizeof(sig), "%s|%s|%s|%d", l1, l2, l3, warning);
+    snprintf(sig, sizeof(sig), "%s|%s|%d", l1, l2, warning);
     if (changed(R_BOTTOM, sig)) {
-        tft.fillRect(0, 159, 320, 81, pal.bg);
+        tft.fillRect(0, 189, 320, 51, pal.bg);
         if (warning) {
-            tft.fillRect(0, 166, 320, 74, pal.warning);
-            if (exhaust.alarmActive()) {
-                drawText(l1, 8, 172, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
-                drawText(l2, 8, 192, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
-                if (l3[0]) drawText(l3, 8, 212, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
-            } else {
-                drawWrapped(l1, 8, 172, 304, 2, pal.onWarning, pal.warning, 3, 20);
-            }
+            tft.fillRect(0, 192, 320, 48, pal.warning);
+            drawText(l1, 8, 196, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
+            if (l2[0]) drawText(l2, 8, 216, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
         }
     }
 }
@@ -667,15 +693,21 @@ void footer(const char* hint) {
 
 void renderMenu() {
     if (fullRedraw) titleBar("Einstellungen", false);
-    for (int i = 0; i < ITEM_COUNT; i++) {
+    // Mehr Eintraege als Platz: die Liste scrollt mit der Auswahl
+    const int visible = 11;
+    int first = menuIndex - (visible - 1);
+    if (first < 0) first = 0;
+    for (int row = 0; row < visible && first + row < ITEM_COUNT; row++) {
+        int i = first + row;
         bool sel = i == menuIndex;
-        char tone[12];
-        snprintf(tone, sizeof(tone), "%u Hz", settings.toneHz);
-        const char* value = i == ITEM_DARK ? (settings.dark ? "Dunkel" : "Hell") : i == ITEM_TONE ? tone : "";
+        char value[12] = "";
+        if (i == ITEM_DARK) snprintf(value, sizeof(value), "%s", settings.dark ? "Dunkel" : "Hell");
+        if (i == ITEM_TONE) snprintf(value, sizeof(value), "%u Hz", settings.toneHz);
+        if (i == ITEM_TIMEZONE) formatUtcOffset(value, sizeof(value), settings.utcOffset);
         char sig[64];
-        snprintf(sig, sizeof(sig), "%d|%s", sel, value);
-        if (!changed(R_ROW0 + i, sig)) continue;
-        int y = 35 + i * 16;
+        snprintf(sig, sizeof(sig), "%d|%d|%s", i, sel, value);
+        if (!changed(R_ROW0 + row, sig)) continue;
+        int y = 35 + row * 16;
         uint16_t bg = sel ? pal.ink : pal.bg, fg = sel ? pal.bg : pal.ink;
         tft.fillRect(0, y, 320, 16, bg);
         drawText(ITEM_LABELS[i], 12, y, 2, fg, bg, ALIGN_LEFT);
@@ -686,9 +718,9 @@ void renderMenu() {
 
 void renderInfo() {
     if (fullRedraw) titleBar("Informationen", false);
-    char v[8][40];
-    const char* labels[8] = {"Systemstarts", "Laufzeit seit Start", "Laufzeit gesamt", "ChainCounter-Adresse",
-                             "Bridge-Adresse", "WLAN", "Firmware", "Ungültige Sätze"};
+    char v[9][40];
+    const char* labels[9] = {"Systemstarts", "Laufzeit seit Start", "Laufzeit gesamt", "ChainCounter-Adresse",
+                             "Bridge-Adresse", "WLAN", "UTC vom GPS", "Firmware", "Ungültige Sätze"};
     if (chain.hasData()) {
         snprintf(v[0], sizeof(v[0]), "%lu", static_cast<unsigned long>(chain.data().systemStarts));
         formatDuration(v[1], sizeof(v[1]), chain.data().actualRuntimeS);
@@ -704,14 +736,17 @@ void renderInfo() {
     else snprintf(v[4], sizeof(v[4]), "-");
     if (wifiConnected) formatIp(v[5], sizeof(v[5]), WiFi.localIP());
     else snprintf(v[5], sizeof(v[5]), "nicht verbunden");
-    snprintf(v[6], sizeof(v[6]), "%s", FW_VERSION);
-    snprintf(v[7], sizeof(v[7]), "%lu", static_cast<unsigned long>(chain.invalidSentences));
-    for (int i = 0; i < 8; i++) {
+    uint32_t now = millis();
+    if (busClock.hasTime()) formatUtcDateTime(v[6], sizeof(v[6]), busClock.utcMillis(now));
+    else snprintf(v[6], sizeof(v[6]), "-");
+    snprintf(v[7], sizeof(v[7]), "%s", FW_VERSION);
+    snprintf(v[8], sizeof(v[8]), "%lu", static_cast<unsigned long>(chain.invalidSentences));
+    for (int i = 0; i < 9; i++) {
         if (!changed(R_ROW0 + i, v[i])) continue;
-        int y = 38 + i * 22;
-        tft.fillRect(0, y, 320, 22, pal.bg);
-        drawText(labels[i], 8, y + 3, 2, pal.muted, pal.bg, ALIGN_LEFT);
-        drawText(v[i], 312, y + 3, 2, pal.ink, pal.bg, ALIGN_RIGHT);
+        int y = 37 + i * 20;
+        tft.fillRect(0, y, 320, 20, pal.bg);
+        drawText(labels[i], 8, y + 2, 2, pal.muted, pal.bg, ALIGN_LEFT);
+        drawText(v[i], 312, y + 2, 2, pal.ink, pal.bg, ALIGN_RIGHT);
     }
     footer("Taste links: zurück");
 }
@@ -764,6 +799,20 @@ void renderDetail(uint32_t now) {
             tft.fillRect(0, 112, 320, 36, pal.bg);
             drawText(sig, 8, 114, 4, pal.ink, pal.bg, ALIGN_LEFT);
         }
+    } else if (item == ITEM_TIMEZONE) {
+        char tz[12], l[32] = "";
+        formatUtcOffset(tz, sizeof(tz), testUtcOffset);
+        if (busClock.hasTime()) {
+            char t[12];
+            formatClock(t, sizeof(t), busClock.utcMillis(now), testUtcOffset);
+            snprintf(l, sizeof(l), "Ortszeit %s", t);
+        }
+        snprintf(sig, sizeof(sig), "%s|%s", tz, l);
+        if (changed(R_EDITOR, sig)) {
+            tft.fillRect(0, 112, 320, 36, pal.bg);
+            int w = drawText(tz, 8, 114, 4, pal.ink, pal.bg, ALIGN_LEFT);
+            if (l[0]) drawText(l, 8 + w + 24, 114, 4, pal.muted, pal.bg, ALIGN_LEFT);
+        }
     } else if (changed(R_EDITOR, "action")) {
         tft.fillRect(0, 112, 320, 36, pal.bg);
     }
@@ -792,6 +841,7 @@ void renderDetail(uint32_t now) {
     }
 
     if (item == ITEM_TONE) footer("Auf/ab: Tonhöhe   Drücken: speichern");
+    else if (item == ITEM_TIMEZONE) footer("Auf/ab: Zeitzone   Drücken: speichern");
     else footer(itemIsLocal(item) ? "Drücken: speichern   Taste links: zurück" : "Drücken: senden   Taste links: zurück");
 }
 
@@ -872,6 +922,7 @@ void openDetail(Item item) {
         case ITEM_FACTOR: setEditor(4000, 7, 4, "m/U"); break;
         case ITEM_ALARM: setEditor(settings.alarmLimit, 3, 0, "°C"); break;
         case ITEM_TONE: testToneHz = settings.toneHz; break;
+        case ITEM_TIMEZONE: testUtcOffset = settings.utcOffset; break;
         default: break;
     }
     show(UiScreen::Detail);
@@ -926,6 +977,7 @@ void submitDetail() {
             } else {
                 settings.n2kPort = static_cast<uint16_t>(v);
                 exhaust.forget();
+                busClock.forget();
                 bridgeKnown = false;
             }
             saveSettings();
@@ -944,6 +996,14 @@ void submitDetail() {
             saveSettings();
             snprintf(messages[detailItem], sizeof(messages[0]), "Tonhöhe %u Hz gespeichert.", testToneHz);
             break;
+        case ITEM_TIMEZONE: {
+            settings.utcOffset = static_cast<int8_t>(testUtcOffset);
+            saveSettings();
+            char tz[12];
+            formatUtcOffset(tz, sizeof(tz), testUtcOffset);
+            snprintf(messages[detailItem], sizeof(messages[0]), "Zeitzone %s gespeichert.", tz);
+            break;
+        }
         default: break;
     }
 }
@@ -983,6 +1043,13 @@ void handleKey(int key) {
                 if (key == K_UP && testToneHz + TONE_STEP_HZ <= TONE_MAX_HZ) testToneHz += TONE_STEP_HZ;
                 if (key == K_DOWN && testToneHz - TONE_STEP_HZ >= TONE_MIN_HZ) testToneHz -= TONE_STEP_HZ;
                 if (key == K_UP || key == K_DOWN) messages[ITEM_TONE][0] = 0;
+                if (key == K_LEFT) show(UiScreen::Menu);
+                break;
+            }
+            if (detailItem == ITEM_TIMEZONE) {
+                if (key == K_UP && testUtcOffset < UTC_OFFSET_MAX) testUtcOffset++;
+                if (key == K_DOWN && testUtcOffset > UTC_OFFSET_MIN) testUtcOffset--;
+                if (key == K_UP || key == K_DOWN) messages[ITEM_TIMEZONE][0] = 0;
                 if (key == K_LEFT) show(UiScreen::Menu);
                 break;
             }

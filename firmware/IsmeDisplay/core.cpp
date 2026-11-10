@@ -212,6 +212,47 @@ bool TemperatureSelector::onFrame(const CanFrame& f, uint32_t now, float& celsiu
     return true;
 }
 
+bool decodeSystemTime(const uint8_t* d, size_t len, uint32_t& days, uint32_t& tenthMillis) {
+    if (len < 8) return false;
+    uint32_t dd = readLe(d + 2, 2), t = readLe(d + 4, 4);
+    if (dd >= 0xFFFD || t >= 864000000u) return false;   // nicht verfuegbar oder ausserhalb eines Tages
+    days = dd;
+    tenthMillis = t;
+    return true;
+}
+
+void BusClock::onTime(uint32_t days, uint32_t tenthMillis, uint32_t now) {
+    baseMs_ = static_cast<uint64_t>(days) * 86400000ULL + tenthMillis / 10;
+    at_ = now;
+    has_ = true;
+}
+
+void formatUtcOffset(char* out, size_t size, int offset) {
+    snprintf(out, size, "UTC%c%d", offset < 0 ? '-' : '+', offset < 0 ? -offset : offset);
+}
+
+void formatClock(char* out, size_t size, uint64_t utcMillis, int offset) {
+    int64_t s = static_cast<int64_t>(utcMillis / 1000) + static_cast<int64_t>(offset) * 3600;
+    int64_t day = ((s % 86400) + 86400) % 86400;
+    snprintf(out, size, "%02d:%02d", static_cast<int>(day / 3600), static_cast<int>(day % 3600 / 60));
+}
+
+void formatUtcDateTime(char* out, size_t size, uint64_t utcMillis) {
+    uint64_t s = utcMillis / 1000;
+    // Tage seit 1970 in ein Kalenderdatum (Algorithmus von Howard Hinnant)
+    int64_t z = static_cast<int64_t>(s / 86400) + 719468;
+    int64_t era = z / 146097;
+    int64_t doe = z - era * 146097;
+    int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int64_t mp = (5 * doy + 2) / 153;
+    int day = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
+    int month = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
+    int year = static_cast<int>(yoe + era * 400 + (month <= 2 ? 1 : 0));
+    unsigned sec = static_cast<unsigned>(s % 86400);
+    snprintf(out, size, "%04d-%02d-%02d %02u:%02u:%02u", year, month, day, sec / 3600, sec % 3600 / 60, sec % 60);
+}
+
 bool DuplicateFilter::isDuplicate(const char* data, size_t len, uint32_t now) {
     uint32_t h = 2166136261u;   // FNV-1a
     for (size_t i = 0; i < len; i++) h = (h ^ static_cast<uint8_t>(data[i])) * 16777619u;

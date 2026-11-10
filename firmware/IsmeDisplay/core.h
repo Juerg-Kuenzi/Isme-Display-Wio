@@ -84,6 +84,35 @@ private:
     uint32_t hash_ = 0, len_ = 0, at_ = 0;
 };
 
+// ---------- Uhrzeit vom NMEA2000-Bus ----------
+
+const uint32_t PGN_SYSTEM_TIME = 126992;
+const int UTC_OFFSET_MIN = -12, UTC_OFFSET_MAX = 14;
+
+// PGN 126992: Tage seit 1.1.1970 und Zeit seit Mitternacht in 0,0001 s (UTC)
+bool decodeSystemTime(const uint8_t* data, size_t len, uint32_t& days, uint32_t& tenthMillis);
+
+// Haelt die zuletzt empfangene UTC-Zeit und schreibt sie mit millis() fort.
+class BusClock {
+public:
+    static const uint32_t STALE_AFTER_MS = 10000;
+    void onTime(uint32_t days, uint32_t tenthMillis, uint32_t now);
+    bool hasTime() const { return has_; }
+    bool isFresh(uint32_t now) const { return has_ && now - at_ < STALE_AFTER_MS; }
+    uint32_t secondsSinceData(uint32_t now) const { return (now - at_) / 1000; }
+    // Millisekunden seit 1.1.1970 UTC
+    uint64_t utcMillis(uint32_t now) const { return baseMs_ + (now - at_); }
+    void forget() { has_ = false; }
+private:
+    bool has_ = false;
+    uint64_t baseMs_ = 0;
+    uint32_t at_ = 0;
+};
+
+void formatUtcOffset(char* out, size_t size, int offsetHours);                    // UTC+2, UTC-3, UTC+0
+void formatClock(char* out, size_t size, uint64_t utcMillis, int offsetHours);   // 21:56
+void formatUtcDateTime(char* out, size_t size, uint64_t utcMillis);              // 2026-11-09 01:37:47
+
 // ---------- Zustand ----------
 
 class ExhaustMonitor {
