@@ -1,6 +1,6 @@
 #pragma once
 
-#define FW_VERSION              "1.0.0"
+#define FW_VERSION              "1.1.0"
 
 // Standardwerte. Die Einstellungen am Geraet werden im Flash gespeichert.
 #define DEFAULT_CHAIN_PORT      1458    // ChainCounter, Spezifikation V1.7
@@ -8,6 +8,10 @@
 #define DEFAULT_ALARM_LIMIT     50      // Abgastemperatur in Grad Celsius
 
 #define WIFI_RETRY_MS           15000   // WLAN neu verbinden, wenn so lange keine Verbindung besteht
-#define TONE_INTERVAL_MS        2000    // Alarmton: alle 2 s ...
-#define TONE_DURATION_MS        1000    // ... fuer 1 s
-#define BUZZER_DUTY             128     // Lautstaerke des Summers (0 bis 255)
+// Alarmton. Ein Piezo-Summer ist bei seiner Resonanzfrequenz am lautesten,
+// deshalb ist die Tonhoehe am Geraet unter "Ton testen" einstellbar.
+#define TONE_DEFAULT_HZ         2700
+#define TONE_MIN_HZ             500
+#define TONE_MAX_HZ             5000
+#define TONE_STEP_HZ            100
+#define TONE_LOW_PERCENT        85      // tiefer Ton im Wechsel: 85 % der hohen Frequenz
