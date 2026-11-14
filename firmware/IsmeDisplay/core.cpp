@@ -95,7 +95,10 @@ ParseResult parseWindlass(const char* text, size_t len, WindlassData& out) {
         }
         p++;
     }
-    if (strcmp(fields[0], "ISLWND") != 0) return ParseResult::OtherSentence;
+    // Neues Format $PXISWND (ChainCounter ab FW 1.3.0). Uebergangsphase:
+    // altes $ISLWND weiterhin annehmen, spaeter entfernen.
+    if (strcmp(fields[0], "PXISWND") != 0 && strcmp(fields[0], "ISLWND") != 0)
+        return ParseResult::OtherSentence;
     if (count != 7) return ParseResult::Invalid;
 
     WindlassData d;
@@ -113,6 +116,9 @@ ParseResult parseWindlass(const char* text, size_t len, WindlassData& out) {
     return ParseResult::Data;
 }
 
+// Uebergangsphase: Kommandos noch in der alten Form $ISLWNS senden. Die
+// versteht jede ChainCounter-Firmware, auch 1.3.0 (dort zusaetzlich zu
+// $PXISWNS). Erst wenn alle Geraete aktualisiert sind, auf $PXISWNS umstellen.
 size_t buildCommand(char* out, size_t size, Command command, long value) {
     char body[40];
     switch (command) {
