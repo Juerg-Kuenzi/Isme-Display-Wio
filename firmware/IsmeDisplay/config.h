@@ -3,7 +3,7 @@
 #define FW_VERSION              "1.3.0"
 
 // Standardwerte. Die Einstellungen am Geraet werden im Flash gespeichert.
-#define DEFAULT_CHAIN_PORT      1458    // ChainCounter, Spezifikation V1.7
+#define DEFAULT_CHAIN_PORT      1458    // ChainCounter, Spezifikation V1.8
 #define DEFAULT_N2K_PORT        1457    // YDWG-02, RAW-Format
 #define DEFAULT_ALARM_LIMIT     50      // Abgastemperatur in Grad Celsius
 
