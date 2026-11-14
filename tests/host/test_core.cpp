@@ -21,6 +21,13 @@ static void testWindlass() {
     NEAR(d.lengthM, 12.4, 1e-4); CHECK(!d.directionUp); NEAR(d.vccVolt, 24.1, 1e-4);
     CHECK(d.systemStarts == 17 && d.totalRuntimeS == 86400 && d.actualRuntimeS == 3605);
 
+    // Neues Format ab ChainCounter FW 1.3.0
+    CHECK(parse("$PXISWND,12.4,0,24.1,17,86400,3605*43", d) == ParseResult::Data);
+    NEAR(d.lengthM, 12.4, 1e-4); CHECK(!d.directionUp); NEAR(d.vccVolt, 24.1, 1e-4);
+    CHECK(d.systemStarts == 17 && d.totalRuntimeS == 86400 && d.actualRuntimeS == 3605);
+    CHECK(parse("$PXISWND,12.4,0,24.1,17,86400,3605*07", d) == ParseResult::Invalid);
+    CHECK(parse("$PXISWNS,C*37", d) == ParseResult::OtherSentence);
+
     char s[128];
     sentence(s, "ISLWND,-1.2,1,12.0,1,0,0");
     strcat(s, "\r\n");

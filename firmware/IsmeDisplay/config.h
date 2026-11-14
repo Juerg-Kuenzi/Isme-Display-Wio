@@ -1,6 +1,6 @@
 #pragma once
 
-#define FW_VERSION              "1.2.0"
+#define FW_VERSION              "1.3.0"
 
 // Standardwerte. Die Einstellungen am Geraet werden im Flash gespeichert.
 #define DEFAULT_CHAIN_PORT      1458    // ChainCounter, Spezifikation V1.7

@@ -37,7 +37,11 @@ Die drei Tasten oben sind von links nach rechts C, B und A.
 
 Die Tastenbelegung lässt sich in `app.cpp` mit `KEY_MENU` und `KEY_MUTE` ändern.
 
-Das Gerät quittiert keine Kommandos. Kommandos gehen per Unicast an die Adresse, von der die `$ISLWND`-Sätze kommen. Auf den Seiten „Zähler nullen“ und „Länge setzen“ steht die Länge, die das Gerät gerade meldet.
+Das Gerät quittiert keine Kommandos. Kommandos gehen per Unicast an die Adresse, von der die Datensätze des ChainCounter kommen. Auf den Seiten „Zähler nullen“ und „Länge setzen“ steht die Länge, die das Gerät gerade meldet.
+
+## Protokoll
+
+Das Display liest die Datensätze `$PXISWND` (ChainCounter ab Firmware 1.3.0) und, für die Übergangsphase, auch noch das alte `$ISLWND`. Kommandos sendet es vorerst weiter als `$ISLWNS`, das versteht jede ChainCounter-Firmware. Sobald alle Geräte aktualisiert sind, wird auf `$PXISWNS` umgestellt und `$ISLWND` entfernt.
 
 ## Einrichten
 
