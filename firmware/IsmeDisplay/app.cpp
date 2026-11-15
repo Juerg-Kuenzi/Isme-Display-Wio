@@ -4,7 +4,8 @@
 #include <TFT_eSPI.h>
 #include <rpcWiFi.h>
 #include <WiFiUdp.h>
-// Darf nur in einer Datei eingebunden werden (stellt EEPROM im Flash bereit).
+// Darf nur in einer Datei eingebunden werden. Verwendet wird nur
+// FlashStorageClass mit fester Adresse (siehe Einstellungen im Flash).
 #include <FlashStorage_SAMD.h>
 
 #include <stdio.h>
@@ -13,7 +14,20 @@
 #include "app.h"
 #include "config.h"
 #include "core.h"
+
+// Die WLAN-Zugangsdaten werden ueber die USB-Konsole gesetzt und im Flash
+// gespeichert (ab Firmware 1.5.0). secrets.h ist nur noch optional: Falls
+// vorhanden, liefert sie die Startwerte beim allerersten Start und beim Update
+// von einer Firmware vor 1.5.0. Die Builds auf GitHub haben keine secrets.h.
+#if __has_include("secrets.h")
 #include "secrets.h"
+#endif
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD ""
+#endif
 
 using namespace isme;
 
@@ -35,9 +49,15 @@ WiFiUDP n2kUdp;
 
 // ---------------------------------------------------------------------------
 // Einstellungen im Flash
+//
+// Ab Firmware 1.5.0 liegen die Einstellungen im letzten 8-KB-Block des internen
+// Flash (512 KB), ausserhalb des Programms. Ein Update per UF2 schreibt nur den
+// Programmbereich, die Einstellungen und WLAN-Zugangsdaten bleiben deshalb
+// erhalten. Bis 1.4.0 lagen sie im EEPROM-Ersatz von FlashStorage_SAMD, der Teil
+// des Programmabbilds ist und bei jedem Update geloescht wurde.
 // ---------------------------------------------------------------------------
-const uint32_t SETTINGS_MAGIC_V1 = 0x15E00001;   // Firmware 1.0.0, ohne Tonhoehe
-const uint32_t SETTINGS_MAGIC = 0x15E00002;
+const uint32_t SETTINGS_MAGIC = 0x15E00003;
+const uint32_t SETTINGS_FLASH_ADDR = 0x7E000;   // letzter Loeschblock (8 KB)
 
 struct Settings {
     uint32_t magic;
@@ -45,21 +65,25 @@ struct Settings {
     uint16_t n2kPort;
     uint16_t alarmLimit;
     uint8_t dark;
-    int8_t utcOffset;   // bis 1.1.1 reserviert und 0
+    int8_t utcOffset;
     uint16_t toneHz;
+    char ssid[SSID_MAX + 1];           // nullterminiert
+    char password[PASSWORD_MAX + 1];   // nullterminiert, leer = offenes Netz
 };
 
 Settings settings;
+FlashStorageClass<Settings> settingsStore(reinterpret_cast<const void*>(SETTINGS_FLASH_ADDR));
+
+void saveSettings() {
+    settingsStore.write(settings);
+}
 
 void loadSettings() {
-    EEPROM.get(0, settings);
-    if (settings.magic == SETTINGS_MAGIC_V1) {
-        settings.magic = SETTINGS_MAGIC;
-        settings.toneHz = TONE_DEFAULT_HZ;
-    }
-    if (settings.utcOffset < UTC_OFFSET_MIN || settings.utcOffset > UTC_OFFSET_MAX) settings.utcOffset = DEFAULT_UTC_OFFSET;
-    if (settings.toneHz < TONE_MIN_HZ || settings.toneHz > TONE_MAX_HZ) settings.toneHz = TONE_DEFAULT_HZ;
+    settingsStore.read(settings);
     if (settings.magic != SETTINGS_MAGIC) {
+        // Erster Start (Block leer oder alter Inhalt): Standardwerte. Die
+        // Zugangsdaten kommen aus secrets.h, falls beim Kompilieren vorhanden,
+        // sonst bleiben sie leer und werden ueber die USB-Konsole gesetzt.
         settings.magic = SETTINGS_MAGIC;
         settings.chainPort = DEFAULT_CHAIN_PORT;
         settings.n2kPort = DEFAULT_N2K_PORT;
@@ -67,12 +91,14 @@ void loadSettings() {
         settings.dark = 0;
         settings.utcOffset = DEFAULT_UTC_OFFSET;
         settings.toneHz = TONE_DEFAULT_HZ;
+        snprintf(settings.ssid, sizeof(settings.ssid), "%s", WIFI_SSID);
+        snprintf(settings.password, sizeof(settings.password), "%s", WIFI_PASSWORD);
+        saveSettings();
     }
-}
-
-void saveSettings() {
-    EEPROM.put(0, settings);
-    EEPROM.commit();
+    if (settings.utcOffset < UTC_OFFSET_MIN || settings.utcOffset > UTC_OFFSET_MAX) settings.utcOffset = DEFAULT_UTC_OFFSET;
+    if (settings.toneHz < TONE_MIN_HZ || settings.toneHz > TONE_MAX_HZ) settings.toneHz = TONE_DEFAULT_HZ;
+    settings.ssid[sizeof(settings.ssid) - 1] = 0;
+    settings.password[sizeof(settings.password) - 1] = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -344,8 +370,10 @@ void openUdp() {
 void startWifi(uint32_t now) {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     wifiStartedAt = now;
+    if (settings.ssid[0] == 0) return;   // noch nicht eingerichtet, siehe USB-Konsole
+    if (settings.password[0] == 0) WiFi.begin(settings.ssid);
+    else WiFi.begin(settings.ssid, settings.password);
 }
 
 void serviceWifi(uint32_t now) {
@@ -735,6 +763,7 @@ void renderInfo() {
     if (bridgeKnown) formatIp(v[4], sizeof(v[4]), bridgeIp);
     else snprintf(v[4], sizeof(v[4]), "-");
     if (wifiConnected) formatIp(v[5], sizeof(v[5]), WiFi.localIP());
+    else if (settings.ssid[0] == 0) snprintf(v[5], sizeof(v[5]), "nicht eingerichtet");
     else snprintf(v[5], sizeof(v[5]), "nicht verbunden");
     uint32_t now = millis();
     if (busClock.hasTime()) formatUtcDateTime(v[6], sizeof(v[6]), busClock.utcMillis(now));
@@ -1071,6 +1100,93 @@ void handleKey(int key) {
 uint32_t lastRender = 0;
 bool renderNeeded = true;
 
+// ---------------------------------------------------------------------------
+// USB-Konsole, 115200 Baud: WLAN-Zugangsdaten setzen und Zustand anzeigen
+// ---------------------------------------------------------------------------
+void consolePrint(const char* text) { Serial.println(text); }
+
+void consoleStatus() {
+    char line[120];
+    snprintf(line, sizeof(line), "Firmware        : %s", FW_VERSION); consolePrint(line);
+    snprintf(line, sizeof(line), "WLAN SSID       : %s", settings.ssid[0] ? settings.ssid : "(nicht eingerichtet)");
+    consolePrint(line);
+    if (settings.password[0]) {
+        snprintf(line, sizeof(line), "WLAN Passwort   : gesetzt (%u Zeichen)",
+                 static_cast<unsigned>(strlen(settings.password)));
+    } else {
+        snprintf(line, sizeof(line), "WLAN Passwort   : leer (offenes Netz)");
+    }
+    consolePrint(line);
+    if (wifiConnected) {
+        char ip[20];
+        formatIp(ip, sizeof(ip), WiFi.localIP());
+        snprintf(line, sizeof(line), "WLAN            : verbunden, %s", ip);
+    } else {
+        snprintf(line, sizeof(line), "WLAN            : nicht verbunden");
+    }
+    consolePrint(line);
+    snprintf(line, sizeof(line), "Port ChainCounter: %u, Port NMEA2000: %u",
+             static_cast<unsigned>(settings.chainPort), static_cast<unsigned>(settings.n2kPort));
+    consolePrint(line);
+}
+
+void handleConsoleLine(char* text) {
+    const char* arg;
+    char line[120];
+    switch (parseConsoleLine(text, &arg)) {
+        case ConsoleCommand::Empty:
+            break;
+        case ConsoleCommand::Help:
+            consolePrint("Befehle:");
+            consolePrint("  status       Zustand anzeigen");
+            consolePrint("  ssid=<name>  WLAN-SSID setzen (1-32 Zeichen), gespeichert, verbindet neu");
+            consolePrint("  pass=<pw>    WLAN-Passwort setzen (leer oder 8-64 Zeichen), gespeichert, verbindet neu");
+            break;
+        case ConsoleCommand::Status:
+            consoleStatus();
+            break;
+        case ConsoleCommand::Ssid:
+            if (!validSsid(arg)) { consolePrint("FEHLER: SSID muss 1-32 Zeichen haben"); break; }
+            snprintf(settings.ssid, sizeof(settings.ssid), "%s", arg);
+            saveSettings();
+            startWifi(millis());
+            snprintf(line, sizeof(line), "OK: SSID '%s' gespeichert, verbinde neu", settings.ssid);
+            consolePrint(line);
+            break;
+        case ConsoleCommand::Password:
+            if (!validPassword(arg)) { consolePrint("FEHLER: Passwort muss leer sein oder 8-64 Zeichen haben"); break; }
+            snprintf(settings.password, sizeof(settings.password), "%s", arg);
+            saveSettings();
+            startWifi(millis());
+            consolePrint("OK: Passwort gespeichert, verbinde neu");
+            break;
+        case ConsoleCommand::Unknown:
+            snprintf(line, sizeof(line), "FEHLER: unbekannter Befehl '%.60s' (help)", arg);
+            consolePrint(line);
+            break;
+    }
+}
+
+void serviceConsole() {
+    static char line[128];
+    static size_t len = 0;
+    while (Serial.available()) {
+        char c = static_cast<char>(Serial.read());
+        if (c == '\r' || c == '\n') {
+            if (len) {
+                line[len] = 0;
+                handleConsoleLine(line);
+                len = 0;
+            }
+        } else if (len < sizeof(line) - 1) {
+            line[len++] = c;
+        } else {
+            consolePrint("FEHLER: Zeile zu lang");
+            len = 0;
+        }
+    }
+}
+
 }  // namespace
 
 void appSetup() {
@@ -1089,6 +1205,7 @@ void appSetup() {
 
 void appLoop() {
     uint32_t now = millis();
+    serviceConsole();
     serviceWifi(now);
     pollUdp(now);
     int key = pollKeys(now);

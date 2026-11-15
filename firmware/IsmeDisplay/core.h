@@ -161,4 +161,18 @@ void formatOneDecimal(char* out, size_t size, float value);
 void formatDuration(char* out, size_t size, uint32_t seconds);   // 01:00:05, 1 d 00:00:00
 void formatFactor(char* out, size_t size, long tenThousandths);  // 4000 -> 0.4
 
+// ---------- USB-Konsole (WLAN-Zugangsdaten) ----------
+
+const size_t SSID_MAX = 32;
+const size_t PASSWORD_MIN = 8, PASSWORD_MAX = 64;
+
+enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, Unknown };
+
+// Wertet eine Zeile der USB-Konsole aus. Leerzeichen am Rand werden entfernt
+// (die Zeile wird dabei veraendert). arg zeigt bei Ssid/Password auf den Wert
+// hinter dem '=', sonst auf die bereinigte Zeile.
+ConsoleCommand parseConsoleLine(char* line, const char** arg);
+bool validSsid(const char* s);       // 1 bis 32 Zeichen
+bool validPassword(const char* s);   // leer (offenes Netz) oder 8 bis 64 Zeichen
+
 }  // namespace isme

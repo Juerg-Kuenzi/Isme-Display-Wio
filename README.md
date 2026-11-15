@@ -12,7 +12,7 @@ Firmware für das Seeed Wio Terminal als fest eingebaute Anzeige an Bord der Ism
 - **Einstellungen:** Hell/Dunkel, Zähler nullen, Länge setzen, Port ChainCounter, Entprellzeit, Umrechnungsfaktor, Restart, Port NMEA2000, Alarmwert Abgas, Ton testen, Zeitzone, Informationen. Die Liste scrollt mit der Auswahl. Factory Reset ist bewusst nicht enthalten.
 - **Dunkel:** rote Anzeige auf Schwarz, damit die Nachtsicht erhalten bleibt.
 
-Ports, Alarmwert, Tonhöhe, Zeitzone und Hell/Dunkel werden im Flash gespeichert und überleben einen Neustart. Standardwerte: ChainCounter 1458, NMEA2000 1457, Alarm 50 °C (`config.h`).
+Ports, Alarmwert, Tonhöhe, Zeitzone, Hell/Dunkel und die WLAN-Zugangsdaten werden im Flash gespeichert und überleben einen Neustart und ab Firmware 1.5.0 auch ein Update per UF2. Standardwerte: ChainCounter 1458, NMEA2000 1457, Alarm 50 °C (`config.h`).
 
 ## Bedienung
 
@@ -48,14 +48,44 @@ Das Display liest die Datensätze `$PXISWND` und sendet Kommandos als `$PXISWNS`
 1. **WLAN-Chip aktualisieren:** Das WLAN des Wio Terminal läuft über einen eigenen Chip (RTL8720DN). Er braucht einmalig die aktuelle Firmware von Seeed, die mit dem `ambd_flash_tool` aufgespielt wird. Anleitung: [Wio Terminal Network Overview](https://wiki.seeedstudio.com/Wio-Terminal-Network-Overview/).
 2. **Arduino IDE 2.x:** Unter *Datei > Einstellungen > Zusätzliche Boardverwalter-URLs* `https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json` eintragen. In der Boardverwaltung „Seeed SAMD Boards“ installieren (gebaut wird mit 1.8.6) und das Board „Seeeduino Wio Terminal“ wählen.
 3. **Bibliotheken:** „Seeed Arduino rpcWiFi“ (installiert die übrigen WLAN-Bibliotheken mit) und „FlashStorage_SAMD“. Die Anzeige-Bibliothek ist im Boardpaket enthalten.
-4. **Zugangsdaten:** `firmware/IsmeDisplay/secrets.h.example` nach `secrets.h` kopieren und SSID und Passwort eintragen. `secrets.h` steht in `.gitignore`.
-5. **Hochladen:** `firmware/IsmeDisplay/IsmeDisplay.ino` öffnen und hochladen.
+4. **Hochladen:** `firmware/IsmeDisplay/IsmeDisplay.ino` öffnen und hochladen.
+5. **Zugangsdaten** über die USB-Konsole setzen (siehe unten).
 
-Die Zugangsdaten sind fest in der Firmware. Wer sie ändern will, muss neu kompilieren.
+Die Arduino IDE ist nur zum Weiterentwickeln nötig. Für ein Update genügt die fertige Datei von GitHub.
 
-### Ohne Arduino IDE
+### Firmware aufspielen ohne Arduino IDE
 
-Der Workflow [`firmware.yml`](.github/workflows/firmware.yml) baut bei jedem Push und stellt `IsmeDisplay.uf2` als Artefakt bereit. Diese Datei enthält aber nur die Platzhalter-Zugangsdaten aus der Vorlage und verbindet sich deshalb nicht mit dem Bordnetz. Sie eignet sich, um Anzeige und Tasten auszuprobieren. Zum Aufspielen den Ein-Schalter zweimal schnell nach unten schieben: Das Wio Terminal erscheint dann als Laufwerk „Arduino“, auf das man die UF2-Datei kopiert.
+GitHub baut die Firmware bei jedem Push. Bei jedem veröffentlichten Release hängt GitHub die Datei `IsmeDisplay-<Version>.uf2` automatisch an das [Release](https://github.com/Juerg-Kuenzi/Isme-Display-Wio/releases) an. Aufspielen geht ohne zusätzliche Programme:
+
+1. Die `.uf2`-Datei herunterladen.
+2. Das Wio Terminal per USB-C an den PC anschließen.
+3. Den Ein-Schalter **zweimal schnell nach unten** schieben. Die blaue LED pulsiert, und auf dem PC erscheint ein Laufwerk **„Arduino“**.
+4. Die `.uf2`-Datei auf dieses Laufwerk kopieren. Das Wio Terminal startet danach von selbst mit der neuen Firmware.
+
+Ab Firmware 1.5.0 bleiben Einstellungen und Zugangsdaten dabei erhalten. Sie liegen im letzten Block des Flash-Speichers, außerhalb des Programms. Ob ein Hochladen aus der Arduino IDE diesen Block ebenfalls verschont, ist nicht geprüft. Im Zweifel danach mit `status` kontrollieren.
+
+### WLAN-Zugangsdaten (USB-Konsole)
+
+Ab Firmware 1.5.0 werden SSID und Passwort nicht mehr einkompiliert, sondern über die USB-Konsole gesetzt und im Flash gespeichert. Deshalb funktioniert die Datei von GitHub direkt an Bord.
+
+Jedes serielle Terminal mit **115200 Baud** reicht, zum Beispiel der serielle Monitor der Arduino IDE, PuTTY oder im Browser (Chrome/Edge) der Bereich *Console* auf <https://espressif.github.io/esptool-js/>:
+
+```
+ssid=MeinBordnetz
+pass=MeinPasswort
+status
+```
+
+| Befehl | Funktion |
+|---|---|
+| `status` | Firmware, SSID, ob ein Passwort gesetzt ist (es wird nie angezeigt), WLAN-Verbindung, Ports |
+| `ssid=<name>` | SSID setzen (1–32 Zeichen), speichern, neu verbinden |
+| `pass=<pw>` | Passwort setzen (leer = offenes Netz, sonst 8–64 Zeichen), speichern, neu verbinden |
+| `help` | Befehlsliste |
+
+Je nach Programm erscheinen die getippten Zeichen nicht auf dem Bildschirm, Enter schickt die Zeile trotzdem ab. Solange keine SSID gesetzt ist, zeigt *Einstellungen > Informationen* bei WLAN „nicht eingerichtet“.
+
+**Update von Firmware 1.4.0 oder älter:** Bis 1.4.0 hat jedes Update alle Einstellungen gelöscht. Beim ersten Start von 1.5.0 gelten deshalb einmalig die Standardwerte. Danach müssen Ports, Alarmwert, Tonhöhe und Zeitzone neu eingestellt und die Zugangsdaten über die Konsole gesetzt werden. Nur wenn man 1.5.0 selbst mit einer `secrets.h` kompiliert, übernimmt das Display die Zugangsdaten von dort. `secrets.h` ist nur noch optional, die Vorlage `secrets.h.example` bleibt für eigene Builds.
 
 ## Stromversorgung
 
@@ -70,7 +100,7 @@ firmware/IsmeDisplay/
   core.h, core.cpp     Kernlogik ohne Arduino: NMEA, YDWG-02-RAW, Temperatur-PGNs,
                        Duplikatfilter, Abgasalarm, Datenausfall, Formatierung
   config.h             Version, Standardwerte, Zeiten
-  secrets.h.example    Vorlage für die WLAN-Zugangsdaten
+  secrets.h.example    optionale Startwerte für die WLAN-Zugangsdaten
 tests/host/            PC-Tests der Kernlogik (g++), mit denselben Testdaten wie die App
 ```
 

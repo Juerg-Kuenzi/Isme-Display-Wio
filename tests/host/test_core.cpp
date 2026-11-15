@@ -176,8 +176,30 @@ static void testFormat() {
     formatDuration(b, sizeof(b), 86400); CHECK(strcmp(b, "1 d 00:00:00") == 0);
 }
 
+static void testConsole() {
+    const char* arg;
+    char a[] = "  help\r\n"; CHECK(parseConsoleLine(a, &arg) == ConsoleCommand::Help);
+    char b[] = "status"; CHECK(parseConsoleLine(b, &arg) == ConsoleCommand::Status);
+    char c[] = "ssid=Mein Bordnetz\r"; CHECK(parseConsoleLine(c, &arg) == ConsoleCommand::Ssid);
+    CHECK(strcmp(arg, "Mein Bordnetz") == 0);
+    char d[] = "pass=geheim123"; CHECK(parseConsoleLine(d, &arg) == ConsoleCommand::Password);
+    CHECK(strcmp(arg, "geheim123") == 0);
+    char e[] = "pass="; CHECK(parseConsoleLine(e, &arg) == ConsoleCommand::Password); CHECK(*arg == 0);
+    char f[] = " \r\n"; CHECK(parseConsoleLine(f, &arg) == ConsoleCommand::Empty);
+    char g[] = "SSID=x"; CHECK(parseConsoleLine(g, &arg) == ConsoleCommand::Unknown);
+    CHECK(strcmp(arg, "SSID=x") == 0);
+
+    CHECK(!validSsid("")); CHECK(validSsid("a"));
+    CHECK(validSsid("12345678901234567890123456789012"));
+    CHECK(!validSsid("123456789012345678901234567890123"));
+    CHECK(validPassword("")); CHECK(!validPassword("1234567")); CHECK(validPassword("12345678"));
+    CHECK(validPassword("1234567890123456789012345678901234567890123456789012345678901234"));
+    CHECK(!validPassword("12345678901234567890123456789012345678901234567890123456789012345"));
+}
+
 int main() {
     testWindlass(); testCommands(); testYdRaw(); testExhaust(); testChain(); testClock(); testFormat();
+    testConsole();
     if (failures) { printf("%d Fehler\n", failures); return 1; }
     printf("ALLE TESTS OK\n");
     return 0;
