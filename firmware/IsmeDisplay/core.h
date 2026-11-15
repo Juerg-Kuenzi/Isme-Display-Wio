@@ -161,6 +161,15 @@ void formatOneDecimal(char* out, size_t size, float value);
 void formatDuration(char* out, size_t size, uint32_t seconds);   // 01:00:05, 1 d 00:00:00
 void formatFactor(char* out, size_t size, long tenThousandths);  // 4000 -> 0.4
 
+// ---------- Hintergrundbeleuchtung ----------
+
+// Nachtstufen 1 bis 10. Das Auge empfindet Helligkeit etwa logarithmisch,
+// deshalb wachsen die Stufen nach oben in groesseren Schritten.
+const int NIGHT_LEVEL_MIN = 1, NIGHT_LEVEL_MAX = 10, NIGHT_LEVEL_DEFAULT = 4;
+const uint8_t BACKLIGHT_DAY_PERCENT = 100;
+// Einschaltdauer der Beleuchtung in Prozent; Werte ausserhalb werden begrenzt.
+uint8_t nightBacklightPercent(int level);
+
 // ---------- USB-Konsole (WLAN-Zugangsdaten) ----------
 
 const size_t SSID_MAX = 32;

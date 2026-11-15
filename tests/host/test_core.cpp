@@ -217,9 +217,18 @@ static void testConsole() {
     CHECK(!validPassword("12345678901234567890123456789012345678901234567890123456789012345"));
 }
 
+static void testBacklight() {
+    CHECK(nightBacklightPercent(NIGHT_LEVEL_MIN) == 1);
+    CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) == 60);
+    CHECK(nightBacklightPercent(0) == 1 && nightBacklightPercent(99) == 60);
+    for (int l = NIGHT_LEVEL_MIN; l < NIGHT_LEVEL_MAX; l++)
+        CHECK(nightBacklightPercent(l) < nightBacklightPercent(l + 1));
+    CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) < BACKLIGHT_DAY_PERCENT);
+}
+
 int main() {
     testWindlass(); testCommands(); testYdRaw(); testExhaust(); testChain(); testClock(); testFormat();
-    testConsole();
+    testConsole(); testBacklight();
     if (failures) { printf("%d Fehler\n", failures); return 1; }
     printf("ALLE TESTS OK\n");
     return 0;

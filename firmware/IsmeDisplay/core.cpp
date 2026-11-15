@@ -336,6 +336,15 @@ void formatFactor(char* out, size_t size, long v) {
     snprintf(out, size, "%ld.%s", whole, digits);
 }
 
+// ---------- Hintergrundbeleuchtung ----------
+
+uint8_t nightBacklightPercent(int level) {
+    static const uint8_t PERCENT[NIGHT_LEVEL_MAX] = {1, 2, 3, 5, 8, 12, 18, 27, 40, 60};
+    if (level < NIGHT_LEVEL_MIN) level = NIGHT_LEVEL_MIN;
+    if (level > NIGHT_LEVEL_MAX) level = NIGHT_LEVEL_MAX;
+    return PERCENT[level - 1];
+}
+
 // ---------- USB-Konsole ----------
 
 ConsoleCommand parseConsoleLine(char* line, const char** arg) {
