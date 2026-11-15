@@ -336,4 +336,30 @@ void formatFactor(char* out, size_t size, long v) {
     snprintf(out, size, "%ld.%s", whole, digits);
 }
 
+// ---------- USB-Konsole ----------
+
+ConsoleCommand parseConsoleLine(char* line, const char** arg) {
+    char* s = line;
+    while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+    char* e = s + strlen(s);
+    while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) *--e = 0;
+    *arg = s;
+    if (*s == 0) return ConsoleCommand::Empty;
+    if (strcmp(s, "help") == 0) return ConsoleCommand::Help;
+    if (strcmp(s, "status") == 0) return ConsoleCommand::Status;
+    if (strncmp(s, "ssid=", 5) == 0) { *arg = s + 5; return ConsoleCommand::Ssid; }
+    if (strncmp(s, "pass=", 5) == 0) { *arg = s + 5; return ConsoleCommand::Password; }
+    return ConsoleCommand::Unknown;
+}
+
+bool validSsid(const char* s) {
+    size_t n = strlen(s);
+    return n >= 1 && n <= SSID_MAX;
+}
+
+bool validPassword(const char* s) {
+    size_t n = strlen(s);
+    return n == 0 || (n >= PASSWORD_MIN && n <= PASSWORD_MAX);
+}
+
 }  // namespace isme

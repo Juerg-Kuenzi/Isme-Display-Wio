@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -20,6 +22,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write   # nur für das Anhängen an ein Release nötig
     steps:
       - uses: actions/checkout@v4
 
@@ -36,14 +40,21 @@ jobs:
           arduino-cli core list
           arduino-cli lib list
 
-      # In der CI gibt es keine echten Zugangsdaten, die Vorlage genuegt zum Kompilieren.
-      - name: secrets.h aus der Vorlage
-        run: cp firmware/IsmeDisplay/secrets.h.example firmware/IsmeDisplay/secrets.h
-
+      # Ohne secrets.h: Die Zugangsdaten werden ueber die USB-Konsole gesetzt
+      # und im Flash gespeichert, die Datei ist deshalb an Bord verwendbar.
       - name: Kompilieren
         run: >
           arduino-cli compile --fqbn Seeeduino:samd:seeed_wio_terminal --warnings default
           --output-dir build firmware/IsmeDisplay
+
+      # Die Einstellungen liegen im letzten Flash-Block ab 0x7E000 (app.cpp).
+      # Das Programm beginnt nach dem Bootloader bei 0x4000 und darf ihn nie erreichen.
+      - name: Platz fuer die Einstellungen pruefen
+        run: |
+          SIZE=$(stat -c %s build/IsmeDisplay.ino.bin)
+          LIMIT=$((0x7E000 - 0x4000))
+          echo "Programm ${SIZE} Bytes, erlaubt ${LIMIT} Bytes"
+          test "${SIZE}" -lt "${LIMIT}"
 
       # UF2 zum Aufspielen per Drag-and-drop. Der Bootloader des Wio Terminal belegt die ersten 16 KB.
       - name: UF2-Datei erzeugen
@@ -54,12 +65,21 @@ jobs:
           curl -fsSLo uf2conv.py https://raw.githubusercontent.com/microsoft/uf2/${UF2_COMMIT}/utils/uf2conv.py
           curl -fsSLo uf2families.json https://raw.githubusercontent.com/microsoft/uf2/${UF2_COMMIT}/utils/uf2families.json
           python3 uf2conv.py -c -b 0x4000 -f SAMD51 -o build/IsmeDisplay.uf2 build/IsmeDisplay.ino.bin
-          ls -l build
+          VERSION=$(sed -n 's/^#define FW_VERSION *"\(.*\)".*/\1/p' firmware/IsmeDisplay/config.h)
+          mkdir -p dist
+          cp build/IsmeDisplay.uf2 "dist/IsmeDisplay-${VERSION}.uf2"
+          ls -l build dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: IsmeDisplay-firmware
           path: |
-            build/IsmeDisplay.uf2
+            dist/*.uf2
             build/IsmeDisplay.ino.bin
           if-no-files-found: error
+
+      - name: An das Release anhängen
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.uf2 --clobber
