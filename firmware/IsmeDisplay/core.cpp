@@ -352,6 +352,32 @@ ConsoleCommand parseConsoleLine(char* line, const char** arg) {
     return ConsoleCommand::Unknown;
 }
 
+ConsoleLineReader::Event ConsoleLineReader::feed(char c) {
+    if (c == '\r' || c == '\n') {
+        if (overflow_) {
+            overflow_ = false;
+            len_ = 0;
+            return Event::None;
+        }
+        if (len_ == 0) return Event::None;   // Leerzeile, z. B. LF nach CR
+        buf_[len_] = 0;
+        len_ = 0;
+        return Event::Line;
+    }
+    if (overflow_) return Event::None;
+    if (c == '\b' || c == 0x7F) {
+        if (len_ > 0) len_--;
+        return Event::None;
+    }
+    if (static_cast<unsigned char>(c) < 0x20) return Event::None;
+    if (len_ < SIZE - 1) {
+        buf_[len_++] = c;
+        return Event::None;
+    }
+    overflow_ = true;
+    return Event::Overflow;
+}
+
 bool validSsid(const char* s) {
     size_t n = strlen(s);
     return n >= 1 && n <= SSID_MAX;

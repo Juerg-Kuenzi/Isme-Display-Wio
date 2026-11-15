@@ -83,7 +83,14 @@ status
 | `pass=<pw>` | Passwort setzen (leer = offenes Netz, sonst 8–64 Zeichen), speichern, neu verbinden |
 | `help` | Befehlsliste |
 
-Je nach Programm erscheinen die getippten Zeichen nicht auf dem Bildschirm, Enter schickt die Zeile trotzdem ab. Solange keine SSID gesetzt ist, zeigt *Einstellungen > Informationen* bei WLAN „nicht eingerichtet“.
+Hinweise zum Terminalprogramm:
+
+- **Zeilenende:** Enter muss CR, LF oder CR+LF senden. In **HTerm** unter *Send on enter* einen dieser Werte wählen, die Grundeinstellung *None* sendet kein Zeilenende. Tera Term und der serielle Monitor der Arduino IDE senden passend.
+- **Echo:** Das Display sendet die getippten Zeichen nicht zurück. In Tera Term sieht man die Eingabe deshalb nur mit *Setup > Terminal > Local echo*.
+- **Rücktaste** korrigiert die Eingabe wie gewohnt. Eine zu lange Zeile (über 127 Zeichen) wird mit „FEHLER: Zeile zu lang“ verworfen, danach geht es normal weiter.
+- **DTR** muss ab Firmware 1.5.1 nicht mehr gesetzt sein. Vorher kamen die Antworten nur an, wenn das Terminal DTR setzte (Tera Term ja, HTerm nur mit der Taste *DTR*).
+
+Solange keine SSID gesetzt ist, zeigt *Einstellungen > Informationen* bei WLAN „nicht eingerichtet“.
 
 **Update von Firmware 1.4.0 oder älter:** Bis 1.4.0 hat jedes Update alle Einstellungen gelöscht. Beim ersten Start von 1.5.0 gelten deshalb einmalig die Standardwerte. Danach müssen Ports, Alarmwert, Tonhöhe und Zeitzone neu eingestellt und die Zugangsdaten über die Konsole gesetzt werden. Nur wenn man 1.5.0 selbst mit einer `secrets.h` kompiliert, übernimmt das Display die Zugangsdaten von dort. `secrets.h` ist nur noch optional, die Vorlage `secrets.h.example` bleibt für eigene Builds.
 

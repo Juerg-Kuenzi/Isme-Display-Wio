@@ -1167,22 +1167,14 @@ void handleConsoleLine(char* text) {
     }
 }
 
+ConsoleLineReader consoleReader;
+
 void serviceConsole() {
-    static char line[128];
-    static size_t len = 0;
     while (Serial.available()) {
-        char c = static_cast<char>(Serial.read());
-        if (c == '\r' || c == '\n') {
-            if (len) {
-                line[len] = 0;
-                handleConsoleLine(line);
-                len = 0;
-            }
-        } else if (len < sizeof(line) - 1) {
-            line[len++] = c;
-        } else {
-            consolePrint("FEHLER: Zeile zu lang");
-            len = 0;
+        switch (consoleReader.feed(static_cast<char>(Serial.read()))) {
+            case ConsoleLineReader::Event::Line: handleConsoleLine(consoleReader.line()); break;
+            case ConsoleLineReader::Event::Overflow: consolePrint("FEHLER: Zeile zu lang"); break;
+            case ConsoleLineReader::Event::None: break;
         }
     }
 }
@@ -1190,7 +1182,11 @@ void serviceConsole() {
 }  // namespace
 
 void appSetup() {
-    Serial.begin(115200);
+    // Ohne DTR-Pruefung: Der USB-Treiber verwirft sonst alle Ausgaben, solange das
+    // Terminalprogramm DTR nicht setzt (z. B. HTerm in der Grundeinstellung).
+    // Ausgaben gibt es nur als Antwort auf Konsolenbefehle, ohne offenes Terminal
+    // wird also nichts gesendet.
+    Serial.beginWithoutDTR(115200);
     for (int i = 0; i < K_COUNT; i++) pinMode(keys[i].pin, INPUT_PULLUP);
     pinMode(WIO_BUZZER, OUTPUT);
     digitalWrite(WIO_BUZZER, LOW);   // nicht noTone(), siehe stopTone()

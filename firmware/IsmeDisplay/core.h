@@ -172,6 +172,24 @@ enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, Unknown };
 // (die Zeile wird dabei veraendert). arg zeigt bei Ssid/Password auf den Wert
 // hinter dem '=', sonst auf die bereinigte Zeile.
 ConsoleCommand parseConsoleLine(char* line, const char** arg);
+
+// Setzt die Zeichen der USB-Konsole zu Zeilen zusammen, unabhaengig davon, wie
+// das Terminalprogramm sendet (Zeichen fuer Zeichen oder ganze Zeile, CR, LF
+// oder CR+LF). Ruecktaste (BS/DEL) loescht das letzte Zeichen, andere
+// Steuerzeichen werden ignoriert. Eine zu lange Zeile wird einmal gemeldet und
+// bis zum Zeilenende verworfen, damit danach wieder normal weitergeht.
+class ConsoleLineReader {
+public:
+    enum class Event { None, Line, Overflow };
+    Event feed(char c);
+    char* line() { return buf_; }
+
+private:
+    static const size_t SIZE = 128;
+    char buf_[SIZE] = {};
+    size_t len_ = 0;
+    bool overflow_ = false;
+};
 bool validSsid(const char* s);       // 1 bis 32 Zeichen
 bool validPassword(const char* s);   // leer (offenes Netz) oder 8 bis 64 Zeichen
 
