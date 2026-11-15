@@ -41,7 +41,7 @@ Das Gerät quittiert keine Kommandos. Kommandos gehen per Unicast an die Adresse
 
 ## Protokoll
 
-Das Display liest die Datensätze `$PXISWND` (ChainCounter ab Firmware 1.3.0) und, für die Übergangsphase, auch noch das alte `$ISLWND`. Kommandos sendet es vorerst weiter als `$ISLWNS`, das versteht jede ChainCounter-Firmware. Sobald alle Geräte aktualisiert sind, wird auf `$PXISWNS` umgestellt und `$ISLWND` entfernt.
+Das Display liest die Datensätze `$PXISWND` und sendet Kommandos als `$PXISWNS` (ChainCounter ab Firmware 1.3.0, Spezifikation V1.9). Die früheren Sätze `$ISLWND`/`$ISLWNS` werden ab Display-Firmware 1.4.0 nicht mehr verwendet.
 
 ## Einrichten
 

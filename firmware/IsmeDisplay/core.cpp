@@ -95,10 +95,8 @@ ParseResult parseWindlass(const char* text, size_t len, WindlassData& out) {
         }
         p++;
     }
-    // Neues Format $PXISWND (ChainCounter ab FW 1.3.0). Uebergangsphase:
-    // altes $ISLWND weiterhin annehmen, spaeter entfernen.
-    if (strcmp(fields[0], "PXISWND") != 0 && strcmp(fields[0], "ISLWND") != 0)
-        return ParseResult::OtherSentence;
+    // Datensatz des ChainCounter (ab FW 1.3.0; frueher $ISLWND)
+    if (strcmp(fields[0], "PXISWND") != 0) return ParseResult::OtherSentence;
     if (count != 7) return ParseResult::Invalid;
 
     WindlassData d;
@@ -116,20 +114,18 @@ ParseResult parseWindlass(const char* text, size_t len, WindlassData& out) {
     return ParseResult::Data;
 }
 
-// Uebergangsphase: Kommandos noch in der alten Form $ISLWNS senden. Die
-// versteht jede ChainCounter-Firmware, auch 1.3.0 (dort zusaetzlich zu
-// $PXISWNS). Erst wenn alle Geraete aktualisiert sind, auf $PXISWNS umstellen.
+// Kommandos $PXISWNS (ChainCounter ab FW 1.3.0)
 size_t buildCommand(char* out, size_t size, Command command, long value) {
     char body[40];
     switch (command) {
-        case Command::ZeroCounter: snprintf(body, sizeof(body), "ISLWNS,C"); break;
-        case Command::Restart: snprintf(body, sizeof(body), "ISLWNS,R"); break;
-        case Command::SetLength: snprintf(body, sizeof(body), "ISLWNS,C,%ld", value); break;
-        case Command::SetDebounce: snprintf(body, sizeof(body), "ISLWNS,S,%ld", value); break;
+        case Command::ZeroCounter: snprintf(body, sizeof(body), "PXISWNS,C"); break;
+        case Command::Restart: snprintf(body, sizeof(body), "PXISWNS,R"); break;
+        case Command::SetLength: snprintf(body, sizeof(body), "PXISWNS,C,%ld", value); break;
+        case Command::SetDebounce: snprintf(body, sizeof(body), "PXISWNS,S,%ld", value); break;
         case Command::SetFactor: {
             char f[16];
             formatFactor(f, sizeof(f), value);
-            snprintf(body, sizeof(body), "ISLWNS,K,%s", f);
+            snprintf(body, sizeof(body), "PXISWNS,K,%s", f);
             break;
         }
     }
