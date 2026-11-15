@@ -38,7 +38,10 @@ using namespace isme;
 #define KEY_MENU WIO_KEY_C   // links: Menue oeffnen und zurueck
 #endif
 #ifndef KEY_MUTE
-#define KEY_MUTE WIO_KEY_A   // rechts: Alarmton aus
+#define KEY_MUTE WIO_KEY_B   // Mitte: Alarmton aus (bis 1.5.1 rechts)
+#endif
+#ifndef KEY_NIGHT
+#define KEY_NIGHT WIO_KEY_A  // rechts: Tag/Nacht umschalten
 #endif
 
 namespace {
@@ -56,7 +59,8 @@ WiFiUDP n2kUdp;
 // erhalten. Bis 1.4.0 lagen sie im EEPROM-Ersatz von FlashStorage_SAMD, der Teil
 // des Programmabbilds ist und bei jedem Update geloescht wurde.
 // ---------------------------------------------------------------------------
-const uint32_t SETTINGS_MAGIC = 0x15E00003;
+const uint32_t SETTINGS_MAGIC_V3 = 0x15E00003;   // Firmware 1.5.x, ohne Nachtstufe
+const uint32_t SETTINGS_MAGIC = 0x15E00004;
 const uint32_t SETTINGS_FLASH_ADDR = 0x7E000;   // letzter Loeschblock (8 KB)
 
 struct Settings {
@@ -64,11 +68,12 @@ struct Settings {
     uint16_t chainPort;
     uint16_t n2kPort;
     uint16_t alarmLimit;
-    uint8_t dark;
+    uint8_t dark;                      // 1 = Nacht: rote Darstellung, gedimmt
     int8_t utcOffset;
     uint16_t toneHz;
     char ssid[SSID_MAX + 1];           // nullterminiert
     char password[PASSWORD_MAX + 1];   // nullterminiert, leer = offenes Netz
+    uint8_t nightLevel;                // ab 1.6.0: Helligkeit in der Nacht, Stufe 1 bis 10
 };
 
 Settings settings;
@@ -80,6 +85,12 @@ void saveSettings() {
 
 void loadSettings() {
     settingsStore.read(settings);
+    if (settings.magic == SETTINGS_MAGIC_V3) {
+        // Update von 1.5.x: alle Einstellungen bleiben, neu ist nur die Nachtstufe
+        settings.magic = SETTINGS_MAGIC;
+        settings.nightLevel = NIGHT_LEVEL_DEFAULT;
+        saveSettings();
+    }
     if (settings.magic != SETTINGS_MAGIC) {
         // Erster Start (Block leer oder alter Inhalt): Standardwerte. Die
         // Zugangsdaten kommen aus secrets.h, falls beim Kompilieren vorhanden,
@@ -93,8 +104,11 @@ void loadSettings() {
         settings.toneHz = TONE_DEFAULT_HZ;
         snprintf(settings.ssid, sizeof(settings.ssid), "%s", WIFI_SSID);
         snprintf(settings.password, sizeof(settings.password), "%s", WIFI_PASSWORD);
+        settings.nightLevel = NIGHT_LEVEL_DEFAULT;
         saveSettings();
     }
+    if (settings.nightLevel < NIGHT_LEVEL_MIN || settings.nightLevel > NIGHT_LEVEL_MAX)
+        settings.nightLevel = NIGHT_LEVEL_DEFAULT;
     if (settings.utcOffset < UTC_OFFSET_MIN || settings.utcOffset > UTC_OFFSET_MAX) settings.utcOffset = DEFAULT_UTC_OFFSET;
     if (settings.toneHz < TONE_MIN_HZ || settings.toneHz > TONE_MAX_HZ) settings.toneHz = TONE_DEFAULT_HZ;
     settings.ssid[sizeof(settings.ssid) - 1] = 0;
@@ -109,14 +123,81 @@ struct Palette {
 };
 Palette pal;
 
-void applyPalette() {
-    if (settings.dark) {
+void applyPalette(bool night) {
+    if (night) {
         pal = {TFT_BLACK, tft.color565(0xFF, 0x4B, 0x3A), tft.color565(0xD0, 0x5A, 0x47),
                tft.color565(0x4A, 0x1A, 0x15), tft.color565(0xFF, 0xB0, 0x00), TFT_BLACK};
     } else {
         pal = {tft.color565(0xEE, 0xF3, 0xF1), tft.color565(0x0E, 0x2A, 0x3B), tft.color565(0x56, 0x6B, 0x78),
                tft.color565(0xB5, 0xC6, 0xCC), tft.color565(0xA3, 0x14, 0x6B), TFT_WHITE};
     }
+}
+
+// ---------------------------------------------------------------------------
+// Hintergrundbeleuchtung (LCD_BACKLIGHT, Pin PC05). Der Pin hat kein PWM. Wie im
+// Beispiel von Seeed (Seeed_Arduino_Sketchbook, examples/WioTerminal_BackLight)
+// erzeugt ein Timer das PWM-Signal, die Logikzelle CCL gibt es weiter und das
+// Ereignissystem schaltet damit den Pin. Abweichend vom Beispiel TC1 mit LUT1
+// statt TC0 mit LUT0: tone() belegt auf dem SAMD51 TC0 fuer den Alarmton.
+//
+// Bei voller Helligkeit (Tag) wird der Pin wie bisher einfach eingeschaltet und
+// das PWM abgehaengt. So bleibt der Bildschirm tagsueber hell, auch wenn das
+// Dimmen auf einer Hardware nicht funktionieren sollte.
+// ---------------------------------------------------------------------------
+const uint8_t BACKLIGHT_PWM_TOP = 100;   // Prozent = Vergleichswert
+bool backlightPwmReady = false;
+
+void backlightInitPwm() {
+    // Takte: TC0/TC1 teilen sich den Takteingang; tone() verwendet ebenfalls GCLK0.
+    GCLK->PCHCTRL[TC1_GCLK_ID].reg = GCLK_PCHCTRL_GEN_GCLK0 | GCLK_PCHCTRL_CHEN;
+    while (!GCLK->PCHCTRL[TC1_GCLK_ID].bit.CHEN) {}
+    GCLK->PCHCTRL[EVSYS_GCLK_ID_0].reg = GCLK_PCHCTRL_GEN_GCLK0 | GCLK_PCHCTRL_CHEN;
+    while (!GCLK->PCHCTRL[EVSYS_GCLK_ID_0].bit.CHEN) {}
+    GCLK->PCHCTRL[CCL_GCLK_ID].reg = GCLK_PCHCTRL_GEN_GCLK0 | GCLK_PCHCTRL_CHEN;
+    while (!GCLK->PCHCTRL[CCL_GCLK_ID].bit.CHEN) {}
+    MCLK->APBAMASK.bit.TC1_ = 1;
+    MCLK->APBBMASK.bit.EVSYS_ = 1;
+    MCLK->APBCMASK.bit.CCL_ = 1;
+
+    // Ereignis: Ausgang LUT1 -> Kanal 0 -> PORT-Ereigniseingang 0, asynchron
+    EVSYS->USER[EVSYS_ID_USER_PORT_EV_0].reg = 0 + 1;   // Kanal 0 (Wert = Kanal + 1)
+    EVSYS->Channel[0].CHANNEL.reg = EVSYS_CHANNEL_EVGEN(EVSYS_ID_GEN_CCL_LUTOUT_1) |
+                                    EVSYS_CHANNEL_PATH_ASYNCHRONOUS;
+
+    // CCL LUT1: Ausgang = Eingang 0 = TC1 WO[0]
+    CCL->CTRL.reg = CCL_CTRL_SWRST;   // wie im Seeed-Beispiel, ohne Warten
+    CCL->SEQCTRL[0].reg = 0;
+    CCL->LUTCTRL[1].reg = CCL_LUTCTRL_TRUTH(0xAA) | CCL_LUTCTRL_LUTEO | CCL_LUTCTRL_INSEL0_TC |
+                          CCL_LUTCTRL_ENABLE;
+    CCL->CTRL.reg = CCL_CTRL_ENABLE;
+
+    // TC1: 8 Bit, normales PWM, Periode 100 -> Vergleichswert = Prozent
+    TC1->COUNT8.CTRLA.reg = TC_CTRLA_SWRST;
+    while (TC1->COUNT8.SYNCBUSY.bit.SWRST) {}
+    TC1->COUNT8.CTRLA.reg = TC_CTRLA_MODE_COUNT8 | TC_CTRLA_PRESCALER_DIV16 | TC_CTRLA_PRESCSYNC_PRESC;
+    TC1->COUNT8.WAVE.reg = TC_WAVE_WAVEGEN_NPWM;
+    TC1->COUNT8.PER.reg = BACKLIGHT_PWM_TOP;
+    TC1->COUNT8.CC[0].reg = BACKLIGHT_PWM_TOP;
+    TC1->COUNT8.CC[1].reg = 0;
+    while (TC1->COUNT8.SYNCBUSY.reg) {}
+    TC1->COUNT8.CTRLA.bit.ENABLE = 1;
+    while (TC1->COUNT8.SYNCBUSY.bit.ENABLE) {}
+    backlightPwmReady = true;
+}
+
+void setBacklight(uint8_t percent) {
+    const uint8_t pin = g_APinDescription[LCD_BACKLIGHT].ulPin;
+    if (percent >= BACKLIGHT_DAY_PERCENT) {
+        PORT->Group[g_APinDescription[LCD_BACKLIGHT].ulPort].EVCTRL.reg = 0;   // PWM abhaengen
+        digitalWrite(LCD_BACKLIGHT, HIGH);
+        return;
+    }
+    if (!backlightPwmReady) backlightInitPwm();
+    TC1->COUNT8.CC[0].reg = percent;
+    while (TC1->COUNT8.SYNCBUSY.bit.CC0) {}
+    // Pin folgt dem Ereignis (Aktion OUT), Ereigniseingang 0 aktiv
+    PORT->Group[g_APinDescription[LCD_BACKLIGHT].ulPort].EVCTRL.reg =
+        PORT_EVCTRL_PID0(pin) | PORT_EVCTRL_EVACT0(0) | PORT_EVCTRL_PORTEI0;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,18 +344,18 @@ void invalidateRegions() {
 enum class UiScreen { Main, Menu, Detail, Info };
 
 enum Item {
-    ITEM_DARK, ITEM_ZERO, ITEM_LENGTH, ITEM_PORT, ITEM_DEBOUNCE, ITEM_FACTOR, ITEM_RESTART,
+    ITEM_NIGHT, ITEM_ZERO, ITEM_LENGTH, ITEM_PORT, ITEM_DEBOUNCE, ITEM_FACTOR, ITEM_RESTART,
     ITEM_N2K_PORT, ITEM_ALARM, ITEM_TONE, ITEM_TIMEZONE, ITEM_INFO, ITEM_COUNT
 };
 
 const char* const ITEM_LABELS[ITEM_COUNT] = {
-    "Hell/Dunkel", "Zähler nullen", "Länge setzen", "Port ChainCounter", "Entprellzeit",
+    "Nachthelligkeit", "Zähler nullen", "Länge setzen", "Port ChainCounter", "Entprellzeit",
     "Umrechnungsfaktor", "Restart", "Port NMEA2000", "Alarmwert Abgas", "Ton testen",
     "Zeitzone", "Informationen",
 };
 
 const char* const ITEM_TEXT[ITEM_COUNT] = {
-    "",
+    "Helligkeit bei Nacht. Die rechte Taste schaltet zwischen Tag (hell) und Nacht (rot, diese Stufe) um.",
     "Setzt den Kettenzähler auf 0. Das Gerät speichert den Wert spätestens nach 15 Minuten.",
     "Setzt die Kettenlänge in ganzen Metern. Das Gerät speichert den Wert spätestens nach 15 Minuten.",
     "Port, auf dem der ChainCounter sendet. Am Gerät wird er an der Konsole mit port= eingestellt.",
@@ -294,6 +375,7 @@ int menuIndex = 0;
 Item detailItem = ITEM_ZERO;
 uint16_t testToneHz = TONE_DEFAULT_HZ;   // Tonhoehe auf der Seite "Ton testen"
 int testUtcOffset = 0;                   // Zeitzone auf der Seite "Zeitzone"
+int testNightLevel = NIGHT_LEVEL_DEFAULT;   // Stufe auf der Seite "Nachthelligkeit"
 
 void formatIp(char* out, size_t size, const IPAddress& ip) {
     snprintf(out, size, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
@@ -353,7 +435,7 @@ bool itemHasEditor(Item item) {
 // Einstellungen, die nur das Display betreffen und nichts ans Geraet senden
 bool itemIsLocal(Item item) {
     return item == ITEM_PORT || item == ITEM_N2K_PORT || item == ITEM_ALARM || item == ITEM_TONE ||
-           item == ITEM_TIMEZONE;
+           item == ITEM_TIMEZONE || item == ITEM_NIGHT;
 }
 
 // ---------------------------------------------------------------------------
@@ -376,8 +458,27 @@ void startWifi(uint32_t now) {
     else WiFi.begin(settings.ssid, settings.password);
 }
 
+// Nach ssid= oder pass= an der Konsole melden, ob die Verbindung zustande kommt.
+// Nur dann, damit ohne offenes Terminal nichts gesendet wird.
+const uint32_t CONSOLE_WIFI_REPORT_MS = 30000;
+bool consoleWifiReport = false;
+uint32_t consoleWifiReportSince = 0;
+void consolePrint(const char* text);
+
 void serviceWifi(uint32_t now) {
     bool connected = WiFi.status() == WL_CONNECTED;
+    if (consoleWifiReport) {
+        if (connected) {
+            char ip[20], line[64];
+            formatIp(ip, sizeof(ip), WiFi.localIP());
+            snprintf(line, sizeof(line), "WLAN verbunden, IP %s", ip);
+            consolePrint(line);
+            consoleWifiReport = false;
+        } else if (now - consoleWifiReportSince > CONSOLE_WIFI_REPORT_MS) {
+            consolePrint("WLAN noch nicht verbunden, es wird weiter versucht. SSID und Passwort pruefen (status).");
+            consoleWifiReport = false;
+        }
+    }
     if (connected && !udpOpen) openUdp();
     if (!connected) {
         if (udpOpen) {
@@ -619,7 +720,7 @@ void renderChainPage(uint32_t now) {
     bool warning = false;
     if (exhaust.alarmActive()) {
         alarmLine(l1, sizeof(l1));
-        if (!exhaust.muted()) snprintf(l2, sizeof(l2), "Taste rechts: Ton aus");
+        if (!exhaust.muted()) snprintf(l2, sizeof(l2), "Taste Mitte: Ton aus");
         warning = true;
     } else if (chainWarning(now, w, sizeof(w))) {
         snprintf(l1, sizeof(l1), "%s", w);
@@ -680,7 +781,7 @@ void renderN2kPage(uint32_t now) {
     bool warning = false;
     if (exhaust.alarmActive()) {
         alarmLine(l1, sizeof(l1));
-        if (!exhaust.muted()) snprintf(l2, sizeof(l2), "Taste rechts: Ton aus");
+        if (!exhaust.muted()) snprintf(l2, sizeof(l2), "Taste Mitte: Ton aus");
         warning = true;
     } else {
         if (n2kWarning(now, w, sizeof(w))) {
@@ -709,7 +810,7 @@ void footer(const char* hint) {
     bool alarm = exhaust.alarmActive();
     if (alarm) {
         alarmLine(l, sizeof(l));
-        if (!exhaust.muted()) strncat(l, ", rechts: Ton aus", sizeof(l) - strlen(l) - 1);
+        if (!exhaust.muted()) strncat(l, ", Mitte: Ton aus", sizeof(l) - strlen(l) - 1);
     } else {
         snprintf(l, sizeof(l), "%s", hint);
     }
@@ -729,7 +830,7 @@ void renderMenu() {
         int i = first + row;
         bool sel = i == menuIndex;
         char value[12] = "";
-        if (i == ITEM_DARK) snprintf(value, sizeof(value), "%s", settings.dark ? "Dunkel" : "Hell");
+        if (i == ITEM_NIGHT) snprintf(value, sizeof(value), "Stufe %u", settings.nightLevel);
         if (i == ITEM_TONE) snprintf(value, sizeof(value), "%u Hz", settings.toneHz);
         if (i == ITEM_TIMEZONE) formatUtcOffset(value, sizeof(value), settings.utcOffset);
         char sig[64];
@@ -842,6 +943,17 @@ void renderDetail(uint32_t now) {
             int w = drawText(tz, 8, 114, 4, pal.ink, pal.bg, ALIGN_LEFT);
             if (l[0]) drawText(l, 8 + w + 24, 114, 4, pal.muted, pal.bg, ALIGN_LEFT);
         }
+    } else if (item == ITEM_NIGHT) {
+        snprintf(sig, sizeof(sig), "Stufe %d von %d", testNightLevel, NIGHT_LEVEL_MAX);
+        if (changed(R_EDITOR, sig)) {
+            tft.fillRect(0, 112, 320, 36, pal.bg);
+            drawText(sig, 8, 114, 4, pal.ink, pal.bg, ALIGN_LEFT);
+            for (int i = 0; i < NIGHT_LEVEL_MAX; i++) {   // Balken, eine Zelle pro Stufe
+                int x = 196 + i * 12;
+                if (i < testNightLevel) tft.fillRect(x, 118, 10, 20, pal.ink);
+                else tft.drawRect(x, 118, 10, 20, pal.muted);
+            }
+        }
     } else if (changed(R_EDITOR, "action")) {
         tft.fillRect(0, 112, 320, 36, pal.bg);
     }
@@ -871,6 +983,7 @@ void renderDetail(uint32_t now) {
 
     if (item == ITEM_TONE) footer("Auf/ab: Tonhöhe   Drücken: speichern");
     else if (item == ITEM_TIMEZONE) footer("Auf/ab: Zeitzone   Drücken: speichern");
+    else if (item == ITEM_NIGHT) footer("Auf/ab: Stufe   Drücken: speichern");
     else footer(itemIsLocal(item) ? "Drücken: speichern   Taste links: zurück" : "Drücken: senden   Taste links: zurück");
 }
 
@@ -894,7 +1007,7 @@ void render(uint32_t now) {
 // ---------------------------------------------------------------------------
 // Bedienung
 // ---------------------------------------------------------------------------
-enum Key { K_UP, K_DOWN, K_LEFT, K_RIGHT, K_PRESS, K_MENU, K_MUTE, K_COUNT };
+enum Key { K_UP, K_DOWN, K_LEFT, K_RIGHT, K_PRESS, K_MENU, K_MUTE, K_NIGHT, K_COUNT };
 
 struct KeyState {
     uint8_t pin;
@@ -907,7 +1020,7 @@ struct KeyState {
 KeyState keys[K_COUNT] = {
     {WIO_5S_UP, true, false, 0, 0},    {WIO_5S_DOWN, true, false, 0, 0}, {WIO_5S_LEFT, true, false, 0, 0},
     {WIO_5S_RIGHT, true, false, 0, 0}, {WIO_5S_PRESS, false, false, 0, 0}, {KEY_MENU, false, false, 0, 0},
-    {KEY_MUTE, false, false, 0, 0},
+    {KEY_MUTE, false, false, 0, 0},    {KEY_NIGHT, false, false, 0, 0},
 };
 
 int pollKeys(uint32_t now) {
@@ -929,9 +1042,37 @@ int pollKeys(uint32_t now) {
     return -1;
 }
 
+// Tag: helle Farben, volle Helligkeit. Nacht: rote Farben, eingestellte Stufe.
+// Auf der Seite "Nachthelligkeit" wird die gewaehlte Stufe sofort vorgefuehrt.
+bool shownNight = false;
+uint8_t shownPercent = 0;
+
+void applyDisplayMode() {
+    bool preview = screen == UiScreen::Detail && detailItem == ITEM_NIGHT;
+    bool night = settings.dark || preview;
+    uint8_t percent = night ? nightBacklightPercent(preview ? testNightLevel : settings.nightLevel)
+                            : BACKLIGHT_DAY_PERCENT;
+    if (night != shownNight) {
+        applyPalette(night);
+        shownNight = night;
+        fullRedraw = true;
+    }
+    if (percent != shownPercent) {
+        setBacklight(percent);
+        shownPercent = percent;
+    }
+}
+
 void show(UiScreen s) {
     screen = s;
     fullRedraw = true;
+    applyDisplayMode();
+}
+
+void toggleNight() {
+    settings.dark = !settings.dark;
+    saveSettings();
+    applyDisplayMode();
 }
 
 void openDetail(Item item) {
@@ -952,6 +1093,7 @@ void openDetail(Item item) {
         case ITEM_ALARM: setEditor(settings.alarmLimit, 3, 0, "°C"); break;
         case ITEM_TONE: testToneHz = settings.toneHz; break;
         case ITEM_TIMEZONE: testUtcOffset = settings.utcOffset; break;
+        case ITEM_NIGHT: testNightLevel = settings.nightLevel; break;
         default: break;
     }
     show(UiScreen::Detail);
@@ -1025,6 +1167,11 @@ void submitDetail() {
             saveSettings();
             snprintf(messages[detailItem], sizeof(messages[0]), "Tonhöhe %u Hz gespeichert.", testToneHz);
             break;
+        case ITEM_NIGHT:
+            settings.nightLevel = static_cast<uint8_t>(testNightLevel);
+            saveSettings();
+            snprintf(messages[detailItem], sizeof(messages[0]), "Nachtstufe %d gespeichert.", testNightLevel);
+            break;
         case ITEM_TIMEZONE: {
             settings.utcOffset = static_cast<int8_t>(testUtcOffset);
             saveSettings();
@@ -1042,6 +1189,10 @@ void handleKey(int key) {
         exhaust.mute();
         return;
     }
+    if (key == K_NIGHT) {
+        toggleNight();
+        return;
+    }
     switch (screen) {
         case UiScreen::Main:
             if (key == K_LEFT && page != 0) { page = 0; fullRedraw = true; }
@@ -1053,12 +1204,7 @@ void handleKey(int key) {
             if (key == K_DOWN) menuIndex = (menuIndex + 1) % ITEM_COUNT;
             if (key == K_MENU || key == K_LEFT) show(UiScreen::Main);
             if (key == K_PRESS || key == K_RIGHT) {
-                if (menuIndex == ITEM_DARK) {
-                    settings.dark = !settings.dark;
-                    saveSettings();
-                    applyPalette();
-                    fullRedraw = true;
-                } else if (menuIndex == ITEM_INFO) {
+                if (menuIndex == ITEM_INFO) {
                     show(UiScreen::Info);
                 } else {
                     openDetail(static_cast<Item>(menuIndex));
@@ -1072,6 +1218,16 @@ void handleKey(int key) {
                 if (key == K_UP && testToneHz + TONE_STEP_HZ <= TONE_MAX_HZ) testToneHz += TONE_STEP_HZ;
                 if (key == K_DOWN && testToneHz - TONE_STEP_HZ >= TONE_MIN_HZ) testToneHz -= TONE_STEP_HZ;
                 if (key == K_UP || key == K_DOWN) messages[ITEM_TONE][0] = 0;
+                if (key == K_LEFT) show(UiScreen::Menu);
+                break;
+            }
+            if (detailItem == ITEM_NIGHT) {
+                if (key == K_UP && testNightLevel < NIGHT_LEVEL_MAX) testNightLevel++;
+                if (key == K_DOWN && testNightLevel > NIGHT_LEVEL_MIN) testNightLevel--;
+                if (key == K_UP || key == K_DOWN) {
+                    messages[ITEM_NIGHT][0] = 0;
+                    applyDisplayMode();
+                }
                 if (key == K_LEFT) show(UiScreen::Menu);
                 break;
             }
@@ -1105,6 +1261,21 @@ bool renderNeeded = true;
 // ---------------------------------------------------------------------------
 void consolePrint(const char* text) { Serial.println(text); }
 
+// Sofort anzeigen, bevor Speichern und Neuverbinden das Programm kurz aufhalten
+void consolePrintNow(const char* text) {
+    Serial.println(text);
+    Serial.flush();
+}
+
+void reconnectFromConsole() {
+    consolePrintNow("Verbinde neu ...");
+    uint32_t now = millis();
+    startWifi(now);
+    wifiConnected = false;
+    consoleWifiReport = true;
+    consoleWifiReportSince = now;
+}
+
 void consoleStatus() {
     char line[120];
     snprintf(line, sizeof(line), "Firmware        : %s", FW_VERSION); consolePrint(line);
@@ -1125,6 +1296,9 @@ void consoleStatus() {
         snprintf(line, sizeof(line), "WLAN            : nicht verbunden");
     }
     consolePrint(line);
+    if (settings.dark) snprintf(line, sizeof(line), "Anzeige         : Nacht, Stufe %u", settings.nightLevel);
+    else snprintf(line, sizeof(line), "Anzeige         : Tag (Nachtstufe %u)", settings.nightLevel);
+    consolePrint(line);
     snprintf(line, sizeof(line), "Port ChainCounter: %u, Port NMEA2000: %u",
              static_cast<unsigned>(settings.chainPort), static_cast<unsigned>(settings.n2kPort));
     consolePrint(line);
@@ -1141,24 +1315,27 @@ void handleConsoleLine(char* text) {
             consolePrint("  status       Zustand anzeigen");
             consolePrint("  ssid=<name>  WLAN-SSID setzen (1-32 Zeichen), gespeichert, verbindet neu");
             consolePrint("  pass=<pw>    WLAN-Passwort setzen (leer oder 8-64 Zeichen), gespeichert, verbindet neu");
+            consolePrint("Nach ssid= oder pass= meldet das Display, ob die Verbindung zustande kommt.");
             break;
         case ConsoleCommand::Status:
             consoleStatus();
             break;
         case ConsoleCommand::Ssid:
             if (!validSsid(arg)) { consolePrint("FEHLER: SSID muss 1-32 Zeichen haben"); break; }
+            snprintf(line, sizeof(line), "SSID '%s' wird gespeichert ...", arg);
+            consolePrintNow(line);
             snprintf(settings.ssid, sizeof(settings.ssid), "%s", arg);
             saveSettings();
-            startWifi(millis());
-            snprintf(line, sizeof(line), "OK: SSID '%s' gespeichert, verbinde neu", settings.ssid);
-            consolePrint(line);
+            consolePrintNow("OK: SSID gespeichert.");
+            reconnectFromConsole();
             break;
         case ConsoleCommand::Password:
             if (!validPassword(arg)) { consolePrint("FEHLER: Passwort muss leer sein oder 8-64 Zeichen haben"); break; }
+            consolePrintNow("Passwort wird gespeichert ...");
             snprintf(settings.password, sizeof(settings.password), "%s", arg);
             saveSettings();
-            startWifi(millis());
-            consolePrint("OK: Passwort gespeichert, verbinde neu");
+            consolePrintNow("OK: Passwort gespeichert.");
+            reconnectFromConsole();
             break;
         case ConsoleCommand::Unknown:
             snprintf(line, sizeof(line), "FEHLER: unbekannter Befehl '%.60s' (help)", arg);
@@ -1167,22 +1344,14 @@ void handleConsoleLine(char* text) {
     }
 }
 
+ConsoleLineReader consoleReader;
+
 void serviceConsole() {
-    static char line[128];
-    static size_t len = 0;
     while (Serial.available()) {
-        char c = static_cast<char>(Serial.read());
-        if (c == '\r' || c == '\n') {
-            if (len) {
-                line[len] = 0;
-                handleConsoleLine(line);
-                len = 0;
-            }
-        } else if (len < sizeof(line) - 1) {
-            line[len++] = c;
-        } else {
-            consolePrint("FEHLER: Zeile zu lang");
-            len = 0;
+        switch (consoleReader.feed(static_cast<char>(Serial.read()))) {
+            case ConsoleLineReader::Event::Line: handleConsoleLine(consoleReader.line()); break;
+            case ConsoleLineReader::Event::Overflow: consolePrint("FEHLER: Zeile zu lang"); break;
+            case ConsoleLineReader::Event::None: break;
         }
     }
 }
@@ -1190,14 +1359,18 @@ void serviceConsole() {
 }  // namespace
 
 void appSetup() {
-    Serial.begin(115200);
+    // Ohne DTR-Pruefung: Der USB-Treiber verwirft sonst alle Ausgaben, solange das
+    // Terminalprogramm DTR nicht setzt (z. B. HTerm in der Grundeinstellung).
+    // Ausgaben gibt es nur als Antwort auf Konsolenbefehle, ohne offenes Terminal
+    // wird also nichts gesendet.
+    Serial.beginWithoutDTR(115200);
     for (int i = 0; i < K_COUNT; i++) pinMode(keys[i].pin, INPUT_PULLUP);
     pinMode(WIO_BUZZER, OUTPUT);
     digitalWrite(WIO_BUZZER, LOW);   // nicht noTone(), siehe stopTone()
     loadSettings();
-    tft.begin();
+    tft.begin();   // schaltet die Beleuchtung ein
     tft.setRotation(3);
-    applyPalette();
+    applyDisplayMode();
     for (int i = 0; i < ITEM_COUNT; i++) messages[i][0] = 0;
     startWifi(millis());
     fullRedraw = true;

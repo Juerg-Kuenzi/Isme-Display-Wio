@@ -336,6 +336,15 @@ void formatFactor(char* out, size_t size, long v) {
     snprintf(out, size, "%ld.%s", whole, digits);
 }
 
+// ---------- Hintergrundbeleuchtung ----------
+
+uint8_t nightBacklightPercent(int level) {
+    static const uint8_t PERCENT[NIGHT_LEVEL_MAX] = {1, 2, 3, 5, 8, 12, 18, 27, 40, 60};
+    if (level < NIGHT_LEVEL_MIN) level = NIGHT_LEVEL_MIN;
+    if (level > NIGHT_LEVEL_MAX) level = NIGHT_LEVEL_MAX;
+    return PERCENT[level - 1];
+}
+
 // ---------- USB-Konsole ----------
 
 ConsoleCommand parseConsoleLine(char* line, const char** arg) {
@@ -350,6 +359,32 @@ ConsoleCommand parseConsoleLine(char* line, const char** arg) {
     if (strncmp(s, "ssid=", 5) == 0) { *arg = s + 5; return ConsoleCommand::Ssid; }
     if (strncmp(s, "pass=", 5) == 0) { *arg = s + 5; return ConsoleCommand::Password; }
     return ConsoleCommand::Unknown;
+}
+
+ConsoleLineReader::Event ConsoleLineReader::feed(char c) {
+    if (c == '\r' || c == '\n') {
+        if (overflow_) {
+            overflow_ = false;
+            len_ = 0;
+            return Event::None;
+        }
+        if (len_ == 0) return Event::None;   // Leerzeile, z. B. LF nach CR
+        buf_[len_] = 0;
+        len_ = 0;
+        return Event::Line;
+    }
+    if (overflow_) return Event::None;
+    if (c == '\b' || c == 0x7F) {
+        if (len_ > 0) len_--;
+        return Event::None;
+    }
+    if (static_cast<unsigned char>(c) < 0x20) return Event::None;
+    if (len_ < SIZE - 1) {
+        buf_[len_++] = c;
+        return Event::None;
+    }
+    overflow_ = true;
+    return Event::Overflow;
 }
 
 bool validSsid(const char* s) {

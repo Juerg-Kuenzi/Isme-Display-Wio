@@ -189,6 +189,26 @@ static void testConsole() {
     char g[] = "SSID=x"; CHECK(parseConsoleLine(g, &arg) == ConsoleCommand::Unknown);
     CHECK(strcmp(arg, "SSID=x") == 0);
 
+    // Zeilen zusammensetzen
+    ConsoleLineReader r;
+    auto feed = [&](const char* text, int& lines, int& overflows, char* last) {
+        for (const char* p = text; *p; p++) {
+            ConsoleLineReader::Event ev = r.feed(*p);
+            if (ev == ConsoleLineReader::Event::Line) { lines++; strcpy(last, r.line()); }
+            if (ev == ConsoleLineReader::Event::Overflow) overflows++;
+        }
+    };
+    char last[200]; int lines = 0, over = 0;
+    feed("status\r\nhelp\n", lines, over, last); CHECK(lines == 2 && strcmp(last, "help") == 0);
+    lines = 0; feed("\r\n\r\n", lines, over, last); CHECK(lines == 0);
+    feed("ssix\bd=Bor\x7f" "ot\r", lines, over, last); CHECK(lines == 1 && strcmp(last, "ssid=Boot") == 0);
+    lines = 0; feed("\b\b\x1bstatus\r", lines, over, last); CHECK(lines == 1 && strcmp(last, "status") == 0);
+    // zu lange Zeile: einmal melden, Rest verwerfen, danach geht es normal weiter
+    char longLine[300]; memset(longLine, 'x', 299); longLine[299] = 0;
+    lines = 0; over = 0; feed(longLine, lines, over, last); feed("yyy\r\n", lines, over, last);
+    CHECK(over == 1 && lines == 0);
+    feed("status\r", lines, over, last); CHECK(lines == 1 && strcmp(last, "status") == 0);
+
     CHECK(!validSsid("")); CHECK(validSsid("a"));
     CHECK(validSsid("12345678901234567890123456789012"));
     CHECK(!validSsid("123456789012345678901234567890123"));
@@ -197,9 +217,18 @@ static void testConsole() {
     CHECK(!validPassword("12345678901234567890123456789012345678901234567890123456789012345"));
 }
 
+static void testBacklight() {
+    CHECK(nightBacklightPercent(NIGHT_LEVEL_MIN) == 1);
+    CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) == 60);
+    CHECK(nightBacklightPercent(0) == 1 && nightBacklightPercent(99) == 60);
+    for (int l = NIGHT_LEVEL_MIN; l < NIGHT_LEVEL_MAX; l++)
+        CHECK(nightBacklightPercent(l) < nightBacklightPercent(l + 1));
+    CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) < BACKLIGHT_DAY_PERCENT);
+}
+
 int main() {
     testWindlass(); testCommands(); testYdRaw(); testExhaust(); testChain(); testClock(); testFormat();
-    testConsole();
+    testConsole(); testBacklight();
     if (failures) { printf("%d Fehler\n", failures); return 1; }
     printf("ALLE TESTS OK\n");
     return 0;

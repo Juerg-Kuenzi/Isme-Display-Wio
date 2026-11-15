@@ -161,6 +161,15 @@ void formatOneDecimal(char* out, size_t size, float value);
 void formatDuration(char* out, size_t size, uint32_t seconds);   // 01:00:05, 1 d 00:00:00
 void formatFactor(char* out, size_t size, long tenThousandths);  // 4000 -> 0.4
 
+// ---------- Hintergrundbeleuchtung ----------
+
+// Nachtstufen 1 bis 10. Das Auge empfindet Helligkeit etwa logarithmisch,
+// deshalb wachsen die Stufen nach oben in groesseren Schritten.
+const int NIGHT_LEVEL_MIN = 1, NIGHT_LEVEL_MAX = 10, NIGHT_LEVEL_DEFAULT = 4;
+const uint8_t BACKLIGHT_DAY_PERCENT = 100;
+// Einschaltdauer der Beleuchtung in Prozent; Werte ausserhalb werden begrenzt.
+uint8_t nightBacklightPercent(int level);
+
 // ---------- USB-Konsole (WLAN-Zugangsdaten) ----------
 
 const size_t SSID_MAX = 32;
@@ -172,6 +181,24 @@ enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, Unknown };
 // (die Zeile wird dabei veraendert). arg zeigt bei Ssid/Password auf den Wert
 // hinter dem '=', sonst auf die bereinigte Zeile.
 ConsoleCommand parseConsoleLine(char* line, const char** arg);
+
+// Setzt die Zeichen der USB-Konsole zu Zeilen zusammen, unabhaengig davon, wie
+// das Terminalprogramm sendet (Zeichen fuer Zeichen oder ganze Zeile, CR, LF
+// oder CR+LF). Ruecktaste (BS/DEL) loescht das letzte Zeichen, andere
+// Steuerzeichen werden ignoriert. Eine zu lange Zeile wird einmal gemeldet und
+// bis zum Zeilenende verworfen, damit danach wieder normal weitergeht.
+class ConsoleLineReader {
+public:
+    enum class Event { None, Line, Overflow };
+    Event feed(char c);
+    char* line() { return buf_; }
+
+private:
+    static const size_t SIZE = 128;
+    char buf_[SIZE] = {};
+    size_t len_ = 0;
+    bool overflow_ = false;
+};
 bool validSsid(const char* s);       // 1 bis 32 Zeichen
 bool validPassword(const char* s);   // leer (offenes Netz) oder 8 bis 64 Zeichen
 
