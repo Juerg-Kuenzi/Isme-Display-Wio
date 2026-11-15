@@ -339,10 +339,52 @@ void formatFactor(char* out, size_t size, long v) {
 // ---------- Hintergrundbeleuchtung ----------
 
 uint8_t nightBacklightPercent(int level) {
-    static const uint8_t PERCENT[NIGHT_LEVEL_MAX] = {1, 2, 3, 5, 8, 12, 18, 27, 40, 60};
+    // etwa gleiche Verhaeltnisse von Stufe zu Stufe (x 1.67), Stufe 10 voll hell
+    static const uint8_t PERCENT[NIGHT_LEVEL_MAX] = {1, 2, 3, 5, 8, 13, 22, 36, 60, 100};
     if (level < NIGHT_LEVEL_MIN) level = NIGHT_LEVEL_MIN;
     if (level > NIGHT_LEVEL_MAX) level = NIGHT_LEVEL_MAX;
     return PERCENT[level - 1];
+}
+
+// ---------- Raymarine: Helligkeit einer Displaygruppe ----------
+
+const char* helmGroupName(uint8_t group) {
+    static const char* const NAMES[HELM_GROUP_MAX + 1] = {
+        "Aus", "Helm 1", "Helm 2", "Cockpit", "Flybridge", "Mast",
+        "Gruppe 1", "Gruppe 2", "Gruppe 3", "Gruppe 4", "Gruppe 5"};
+    return group <= HELM_GROUP_MAX ? NAMES[group] : "?";
+}
+
+bool RaymarineBrightness::onFrame(const CanFrame& f, uint8_t group, uint8_t& percent) {
+    if (f.pgn != PGN_PROPRIETARY_FAST || f.length != 8 || group == HELM_GROUP_OFF) return false;
+    uint8_t sequence = f.data[0] >> 5, index = f.data[0] & 0x1F;
+    if (index == 0) {
+        // Rahmen 0: Laenge 9, Raymarine (1851, Marine), Display 140/12, Gruppe
+        bool match = f.data[1] == 9 && f.data[2] == 0x3B && f.data[3] == 0x9F &&
+                     f.data[4] == 0x8C && f.data[5] == 0x0C && f.data[6] == group;
+        for (Pending& p : pending_)
+            if (p.active && p.source == f.source) p.active = false;
+        if (match) {
+            pending_[next_] = {true, f.source, sequence};
+            next_ = (next_ + 1) % SLOTS;
+        }
+        return false;
+    }
+    if (index != 1) return false;
+    for (Pending& p : pending_) {
+        if (!p.active || p.source != f.source || p.sequence != sequence) continue;
+        p.active = false;
+        // Rahmen 1: Befehl (0 = Helligkeit, 1 = Farbe), Wert
+        if (f.data[1] != 0 || f.data[2] > 100) return false;
+        percent = f.data[2];
+        return true;
+    }
+    return false;
+}
+
+int raymarineLevel(uint8_t percent) {
+    if (percent > 100) percent = 100;
+    return (percent * 9 + 50) / 100 + 1;
 }
 
 // ---------- USB-Konsole ----------

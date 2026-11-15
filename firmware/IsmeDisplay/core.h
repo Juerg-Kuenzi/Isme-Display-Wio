@@ -168,7 +168,37 @@ void formatFactor(char* out, size_t size, long tenThousandths);  // 4000 -> 0.4
 const int NIGHT_LEVEL_MIN = 1, NIGHT_LEVEL_MAX = 10, NIGHT_LEVEL_DEFAULT = 4;
 const uint8_t BACKLIGHT_DAY_PERCENT = 100;
 // Einschaltdauer der Beleuchtung in Prozent; Werte ausserhalb werden begrenzt.
+// Stufe 10 ist voll hell, wie Stufe 10 an den Raymarine-Instrumenten.
 uint8_t nightBacklightPercent(int level);
+
+// ---------- Raymarine: Helligkeit einer Displaygruppe (PGN 126720) ----------
+//
+// Raymarine-Geraete melden eine Helligkeitsaenderung ihrer Gruppe einmalig als
+// herstellereigene Nachricht (canboat: "Seatalk1: Display Brightness"), in zwei
+// CAN-Rahmen (Fast Packet), z. B. Bruecke (Helm 1) Stufe 3 = 22 %:
+//   1DEFFF70 40 09 3B 9F 8C 0C 01 01   Laenge 9, Raymarine, 140/12, Gruppe 1, shared
+//   1DEFFF70 41 00 16 00 FF FF FF FF   Befehl 0 = Helligkeit, 22 %
+// Die Instrumente senden 10 Stufen: 0, 11, 22, 33, 45, 56, 67, 78, 89, 100 %.
+const uint32_t PGN_PROPRIETARY_FAST = 126720;
+const uint8_t HELM_GROUP_OFF = 0;      // Raymarine-Gruppe 0 = "None", hier: nicht folgen
+const uint8_t HELM_GROUP_MAX = 10;     // 1 Helm 1 ... 5 Mast, 6-10 Group 1-5
+const char* helmGroupName(uint8_t group);
+
+class RaymarineBrightness {
+public:
+    // Liefert true, wenn mit diesem Rahmen eine Helligkeitsmeldung der Gruppe
+    // vollstaendig ist; percent ist dann 0 bis 100.
+    bool onFrame(const CanFrame& f, uint8_t group, uint8_t& percent);
+
+private:
+    struct Pending { bool active; uint8_t source; uint8_t sequence; };
+    static const int SLOTS = 4;   // mehrere Absender gleichzeitig
+    Pending pending_[SLOTS] = {};
+    int next_ = 0;
+};
+
+// Raymarine-Prozentwert -> Stufe 1 bis 10 (0 % = Stufe 1, 100 % = Stufe 10)
+int raymarineLevel(uint8_t percent);
 
 // ---------- USB-Konsole (WLAN-Zugangsdaten) ----------
 

@@ -219,16 +219,46 @@ static void testConsole() {
 
 static void testBacklight() {
     CHECK(nightBacklightPercent(NIGHT_LEVEL_MIN) == 1);
-    CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) == 60);
-    CHECK(nightBacklightPercent(0) == 1 && nightBacklightPercent(99) == 60);
+    CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) == 100);
+    CHECK(nightBacklightPercent(0) == 1 && nightBacklightPercent(99) == 100);
     for (int l = NIGHT_LEVEL_MIN; l < NIGHT_LEVEL_MAX; l++)
         CHECK(nightBacklightPercent(l) < nightBacklightPercent(l + 1));
-    CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) < BACKLIGHT_DAY_PERCENT);
+    CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) == BACKLIGHT_DAY_PERCENT);
+}
+
+// Rahmen aus dem Log vom 15.11.2026: Bruecke (Helm 1), Instrument Adresse 112
+static void testRaymarineBrightness() {
+    // gesendete Prozentwerte der Stufen 1 bis 10 -> gleiche Stufennummer
+    const uint8_t sent[10] = {0, 11, 22, 33, 45, 56, 67, 78, 89, 100};
+    for (int i = 0; i < 10; i++) CHECK(raymarineLevel(sent[i]) == i + 1);
+
+    RaymarineBrightness rb;
+    uint8_t pct = 255;
+    CHECK(!rb.onFrame(frame("11:45:23.471 R 1DEFFF70 40 09 3B 9F 8C 0C 01 01"), 1, pct));
+    CHECK(rb.onFrame(frame("11:45:23.472 R 1DEFFF70 41 00 16 00 FF FF FF FF"), 1, pct) && pct == 22);
+    // andere Gruppe oder "Aus": ignoriert
+    CHECK(!rb.onFrame(frame("11:45:23.471 R 1DEFFF70 40 09 3B 9F 8C 0C 01 01"), 2, pct));
+    CHECK(!rb.onFrame(frame("11:45:23.472 R 1DEFFF70 41 00 16 00 FF FF FF FF"), 2, pct));
+    CHECK(!rb.onFrame(frame("11:45:23.471 R 1DEFFF70 40 09 3B 9F 8C 0C 01 01"), HELM_GROUP_OFF, pct));
+    // Farbe (Befehl 1) ist keine Helligkeit
+    CHECK(!rb.onFrame(frame("11:00:00.000 R 1DEFFF70 60 09 3B 9F 8C 0C 01 01"), 1, pct));
+    CHECK(!rb.onFrame(frame("11:00:00.001 R 1DEFFF70 61 01 03 00 FF FF FF FF"), 1, pct));
+    // Folgerahmen ohne passenden ersten Rahmen oder mit anderer Sequenz
+    CHECK(!rb.onFrame(frame("11:00:00.002 R 1DEFFF70 21 00 16 00 FF FF FF FF"), 1, pct));
+    CHECK(!rb.onFrame(frame("11:00:00.003 R 1DEFFF70 80 09 3B 9F 8C 0C 01 01"), 1, pct));
+    CHECK(!rb.onFrame(frame("11:00:00.004 R 1DEFFF70 A1 00 16 00 FF FF FF FF"), 1, pct));
+    // anderes Raymarine-Fast-Packet derselben PGN (Plotter, Adresse 204)
+    CHECK(!rb.onFrame(frame("11:45:12.169 R 1DEFFFCC 00 09 3B 9F F0 81 AE 02"), 1, pct));
+    CHECK(!rb.onFrame(frame("11:45:12.170 R 1DEFFFCC 01 00 16 00 FF FF FF FF"), 1, pct));
+    // Stufe 1 = 0 %
+    CHECK(!rb.onFrame(frame("11:45:21.871 R 1DEFFF70 E0 09 3B 9F 8C 0C 01 01"), 1, pct));
+    CHECK(rb.onFrame(frame("11:45:21.872 R 1DEFFF70 E1 00 00 00 FF FF FF FF"), 1, pct) && pct == 0);
+    CHECK(!strcmp(helmGroupName(1), "Helm 1") && !strcmp(helmGroupName(0), "Aus"));
 }
 
 int main() {
     testWindlass(); testCommands(); testYdRaw(); testExhaust(); testChain(); testClock(); testFormat();
-    testConsole(); testBacklight();
+    testConsole(); testBacklight(); testRaymarineBrightness();
     if (failures) { printf("%d Fehler\n", failures); return 1; }
     printf("ALLE TESTS OK\n");
     return 0;

@@ -9,11 +9,12 @@ Firmware für das Seeed Wio Terminal als fest eingebaute Anzeige an Bord der Ism
 - **Ortszeit:** UTC aus PGN 126992 „System Time“ vom GPS, plus die eingestellte Zeitzone (UTC−12 bis UTC+14, ganze Stunden, Standard UTC+0). Zwischen zwei Meldungen läuft die Uhr mit der internen Zeit weiter.
 - **Abgasalarm:** Über dem Alarmwert (Standard 50 °C) erscheint ein Alarmbalken auf jeder Seite, und der Summer gibt alle 2 s vier kurze Töne auf der eingestellten Tonhöhe. Die mittlere Taste schaltet den Ton bis zum nächsten Alarm aus (bis Firmware 1.5.1 die rechte Taste). Der Alarm endet 1 °C unter dem Alarmwert.
 - **Ton testen:** Ein Piezo-Summer ist bei seiner Resonanzfrequenz am lautesten. Unter *Einstellungen > Ton testen* spielt der Alarmton, und mit dem Joystick auf/ab lässt sich die Tonhöhe in Schritten von 100 Hz zwischen 500 und 5000 Hz verstellen (Standard 2700 Hz). Drücken speichert die lauteste Einstellung.
-- **Einstellungen:** Nachthelligkeit, Zähler nullen, Länge setzen, Port ChainCounter, Entprellzeit, Umrechnungsfaktor, Restart, Port NMEA2000, Alarmwert Abgas, Ton testen, Zeitzone, Informationen. Die Liste scrollt mit der Auswahl. Factory Reset ist bewusst nicht enthalten.
+- **Einstellungen:** Nachthelligkeit, Helligkeit folgt, Zähler nullen, Länge setzen, Port ChainCounter, Entprellzeit, Umrechnungsfaktor, Restart, Port NMEA2000, Alarmwert Abgas, Ton testen, Zeitzone, Informationen. Die Liste scrollt mit der Auswahl. Factory Reset ist bewusst nicht enthalten.
 - **Tag/Nacht:** Die rechte Taste schaltet direkt um. Tag: helle Farben, volle Helligkeit. Nacht: rote Anzeige auf Schwarz, damit die Nachtsicht erhalten bleibt, und die Hintergrundbeleuchtung gedimmt auf die eingestellte Nachtstufe.
-- **Nachthelligkeit:** Unter *Einstellungen > Nachthelligkeit* lässt sich die Nachtstufe mit dem Joystick auf/ab in 10 Stufen einstellen (Standard 4). Die gewählte Stufe wird sofort mit der Nachtdarstellung vorgeführt, Drücken speichert sie. Taste links verlässt die Seite ohne zu speichern. Die Stufen entsprechen 1, 2, 3, 5, 8, 12, 18, 27, 40 und 60 % Helligkeit, weil das Auge kleine Helligkeiten feiner unterscheidet.
+- **Nachthelligkeit:** Unter *Einstellungen > Nachthelligkeit* lässt sich die Nachtstufe mit dem Joystick auf/ab in 10 Stufen einstellen (Standard 4). Die gewählte Stufe wird sofort mit der Nachtdarstellung vorgeführt, Drücken speichert sie. Taste links verlässt die Seite ohne zu speichern. Die Stufen entsprechen 1, 2, 3, 5, 8, 13, 22, 36, 60 und 100 % Helligkeit, weil das Auge kleine Helligkeiten feiner unterscheidet.
+- **Helligkeit folgt der Brücke:** Nachts übernimmt das Display die Helligkeitsstufe einer Raymarine-Displaygruppe (Standard *Helm 1*), sobald sie an einem Instrument dieser Gruppe verstellt wird: Stufe n am Instrument = Nachtstufe n am Display. Tagsüber bleibt das Display voll hell. Die Instrumente senden nur bei einer Änderung; bis dahin und nach dem Einschalten gilt die eigene Nachtstufe. Wer die eigene Nachtstufe speichert, überschreibt die gemeldete Stufe bis zur nächsten Meldung. Die Gruppe wird unter *Einstellungen > Helligkeit folgt* gewählt (Aus, Helm 1, Helm 2, Cockpit, Flybridge, Mast, Gruppe 1–5); dort steht auch die zuletzt gemeldete Stufe.
 
-Ports, Alarmwert, Tonhöhe, Zeitzone, Tag/Nacht, Nachtstufe und die WLAN-Zugangsdaten werden im Flash gespeichert und überleben einen Neustart und ab Firmware 1.5.0 auch ein Update per UF2. Standardwerte: ChainCounter 1458, NMEA2000 1457, Alarm 50 °C (`config.h`).
+Ports, Alarmwert, Tonhöhe, Zeitzone, Tag/Nacht, Nachtstufe, Displaygruppe und die WLAN-Zugangsdaten werden im Flash gespeichert und überleben einen Neustart und ab Firmware 1.5.0 auch ein Update per UF2. Standardwerte: ChainCounter 1458, NMEA2000 1457, Alarm 50 °C (`config.h`).
 
 ## Bedienung
 
@@ -83,7 +84,7 @@ status
 
 | Befehl | Funktion |
 |---|---|
-| `status` | Firmware, SSID, ob ein Passwort gesetzt ist (es wird nie angezeigt), WLAN-Verbindung, Tag/Nacht mit Nachtstufe, Ports |
+| `status` | Firmware, SSID, ob ein Passwort gesetzt ist (es wird nie angezeigt), WLAN-Verbindung, Tag/Nacht mit Nachtstufe, Displaygruppe mit zuletzt gemeldeter Stufe, Ports |
 | `ssid=<name>` | SSID setzen (1–32 Zeichen), speichern, neu verbinden. Meldet sofort „wird gespeichert …“, dann „gespeichert“ und „Verbinde neu …“, danach „WLAN verbunden, IP …“ oder nach 30 s einen Hinweis, falls keine Verbindung zustande kommt |
 | `pass=<pw>` | Passwort setzen (leer = offenes Netz, sonst 8–64 Zeichen), speichern, neu verbinden, Meldungen wie bei `ssid=` |
 | `help` | Befehlsliste |
@@ -110,15 +111,30 @@ firmware/IsmeDisplay/
   IsmeDisplay.ino      Einstieg, ruft appSetup() und appLoop() auf
   app.cpp              Anzeige, Tasten, WLAN/UDP, Summer, Einstellungen im Flash
   core.h, core.cpp     Kernlogik ohne Arduino: NMEA, YDWG-02-RAW, Temperatur-PGNs,
-                       Duplikatfilter, Abgasalarm, Datenausfall, Formatierung
+                       Raymarine-Helligkeit, Duplikatfilter, Abgasalarm, Datenausfall,
+                       Formatierung, Konsole
   config.h             Version, Standardwerte, Zeiten
   secrets.h.example    optionale Startwerte für die WLAN-Zugangsdaten
 tests/host/            PC-Tests der Kernlogik (g++), mit denselben Testdaten wie die App
+tools/log_n2k_raw.py   Aufnahme der YDWG-02-RAW-Daten mit Markierungen (PC, Python 3)
 ```
 
 ```
 make -C tests/host
 ```
+
+## Raymarine-Helligkeit (PGN 126720)
+
+Raymarine-Geräte melden eine Helligkeitsänderung ihrer Displaygruppe einmalig als herstellereigene Nachricht in zwei CAN-Rahmen ([canboat](https://github.com/canboat/canboat): „Seatalk1: Display Brightness“). Aufgezeichnet an Bord, Brücke (*Helm 1*), Stufe 3:
+
+```
+R 1DEFFF70 40 09 3B 9F 8C 0C 01 01   Länge 9, Raymarine (1851), 140/12, Gruppe 1, shared
+R 1DEFFF70 41 00 16 00 FF FF FF FF   Befehl 0 = Helligkeit, 0x16 = 22 %
+```
+
+Die Stufen 1 bis 10 kommen als 0, 11, 22, 33, 45, 56, 67, 78, 89 und 100 %. Tag/Nacht am Plotter wurde in den Aufnahmen nicht gesendet.
+
+Zum Aufzeichnen eigener Daten: `tools/log_n2k_raw.py` (Python 3, keine weiteren Pakete) speichert die RAW-Daten der YDWG-02 mit Markierungen, die man während der Aufnahme eintippt. Am zuverlässigsten per TCP zu einem eigenen Server der YDWG-02 (TCP, RAW, ohne Filter): `python log_n2k_raw.py --tcp <IP> --port <Port>`.
 
 ## Grenzen
 
