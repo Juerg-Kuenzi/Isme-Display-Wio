@@ -60,7 +60,9 @@ WiFiUDP n2kUdp;
 // des Programmabbilds ist und bei jedem Update geloescht wurde.
 // ---------------------------------------------------------------------------
 const uint32_t SETTINGS_MAGIC_V3 = 0x15E00003;   // Firmware 1.5.x, ohne Nachtstufe
-const uint32_t SETTINGS_MAGIC = 0x15E00004;
+const uint32_t SETTINGS_MAGIC_V4 = 0x15E00004;   // Firmware 1.6.x, ohne Displaygruppe
+const uint32_t SETTINGS_MAGIC = 0x15E00005;
+const uint8_t DEFAULT_HELM_GROUP = 1;            // Raymarine "Helm 1" = Bruecke
 const uint32_t SETTINGS_FLASH_ADDR = 0x7E000;   // letzter Loeschblock (8 KB)
 
 struct Settings {
@@ -74,6 +76,7 @@ struct Settings {
     char ssid[SSID_MAX + 1];           // nullterminiert
     char password[PASSWORD_MAX + 1];   // nullterminiert, leer = offenes Netz
     uint8_t nightLevel;                // ab 1.6.0: Helligkeit in der Nacht, Stufe 1 bis 10
+    uint8_t helmGroup;                 // ab 1.7.0: nachts der Helligkeit dieser Raymarine-Gruppe folgen, 0 = aus
 };
 
 Settings settings;
@@ -87,8 +90,13 @@ void loadSettings() {
     settingsStore.read(settings);
     if (settings.magic == SETTINGS_MAGIC_V3) {
         // Update von 1.5.x: alle Einstellungen bleiben, neu ist nur die Nachtstufe
-        settings.magic = SETTINGS_MAGIC;
+        settings.magic = SETTINGS_MAGIC_V4;
         settings.nightLevel = NIGHT_LEVEL_DEFAULT;
+    }
+    if (settings.magic == SETTINGS_MAGIC_V4) {
+        // Update von 1.6.x: alle Einstellungen bleiben, neu ist nur die Displaygruppe
+        settings.magic = SETTINGS_MAGIC;
+        settings.helmGroup = DEFAULT_HELM_GROUP;
         saveSettings();
     }
     if (settings.magic != SETTINGS_MAGIC) {
@@ -105,10 +113,12 @@ void loadSettings() {
         snprintf(settings.ssid, sizeof(settings.ssid), "%s", WIFI_SSID);
         snprintf(settings.password, sizeof(settings.password), "%s", WIFI_PASSWORD);
         settings.nightLevel = NIGHT_LEVEL_DEFAULT;
+        settings.helmGroup = DEFAULT_HELM_GROUP;
         saveSettings();
     }
     if (settings.nightLevel < NIGHT_LEVEL_MIN || settings.nightLevel > NIGHT_LEVEL_MAX)
         settings.nightLevel = NIGHT_LEVEL_DEFAULT;
+    if (settings.helmGroup > HELM_GROUP_MAX) settings.helmGroup = DEFAULT_HELM_GROUP;
     if (settings.utcOffset < UTC_OFFSET_MIN || settings.utcOffset > UTC_OFFSET_MAX) settings.utcOffset = DEFAULT_UTC_OFFSET;
     if (settings.toneHz < TONE_MIN_HZ || settings.toneHz > TONE_MAX_HZ) settings.toneHz = TONE_DEFAULT_HZ;
     settings.ssid[sizeof(settings.ssid) - 1] = 0;
@@ -344,18 +354,19 @@ void invalidateRegions() {
 enum class UiScreen { Main, Menu, Detail, Info };
 
 enum Item {
-    ITEM_NIGHT, ITEM_ZERO, ITEM_LENGTH, ITEM_PORT, ITEM_DEBOUNCE, ITEM_FACTOR, ITEM_RESTART,
+    ITEM_NIGHT, ITEM_HELM, ITEM_ZERO, ITEM_LENGTH, ITEM_PORT, ITEM_DEBOUNCE, ITEM_FACTOR, ITEM_RESTART,
     ITEM_N2K_PORT, ITEM_ALARM, ITEM_TONE, ITEM_TIMEZONE, ITEM_INFO, ITEM_COUNT
 };
 
 const char* const ITEM_LABELS[ITEM_COUNT] = {
-    "Nachthelligkeit", "Zähler nullen", "Länge setzen", "Port ChainCounter", "Entprellzeit",
+    "Nachthelligkeit", "Helligkeit folgt", "Zähler nullen", "Länge setzen", "Port ChainCounter", "Entprellzeit",
     "Umrechnungsfaktor", "Restart", "Port NMEA2000", "Alarmwert Abgas", "Ton testen",
     "Zeitzone", "Informationen",
 };
 
 const char* const ITEM_TEXT[ITEM_COUNT] = {
     "Helligkeit bei Nacht. Die rechte Taste schaltet zwischen Tag (hell) und Nacht (rot, diese Stufe) um.",
+    "Nachts übernimmt das Display die Helligkeitsstufe dieser Raymarine-Displaygruppe, sobald sie dort verstellt wird.",
     "Setzt den Kettenzähler auf 0. Das Gerät speichert den Wert spätestens nach 15 Minuten.",
     "Setzt die Kettenlänge in ganzen Metern. Das Gerät speichert den Wert spätestens nach 15 Minuten.",
     "Port, auf dem der ChainCounter sendet. Am Gerät wird er an der Konsole mit port= eingestellt.",
@@ -376,6 +387,14 @@ Item detailItem = ITEM_ZERO;
 uint16_t testToneHz = TONE_DEFAULT_HZ;   // Tonhoehe auf der Seite "Ton testen"
 int testUtcOffset = 0;                   // Zeitzone auf der Seite "Zeitzone"
 int testNightLevel = NIGHT_LEVEL_DEFAULT;   // Stufe auf der Seite "Nachthelligkeit"
+int testHelmGroup = DEFAULT_HELM_GROUP;     // Gruppe auf der Seite "Helligkeit folgt"
+
+// Zuletzt von der Raymarine-Gruppe gemeldete Stufe, 0 = noch keine Meldung.
+// Die Instrumente senden nur bei einer Aenderung; bis dahin gilt die eigene
+// Nachtstufe. Das Speichern der eigenen Nachtstufe hebt die Meldung wieder auf.
+int helmLevel = 0;
+RaymarineBrightness helmBrightness;
+void applyDisplayMode();
 
 void formatIp(char* out, size_t size, const IPAddress& ip) {
     snprintf(out, size, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
@@ -435,7 +454,7 @@ bool itemHasEditor(Item item) {
 // Einstellungen, die nur das Display betreffen und nichts ans Geraet senden
 bool itemIsLocal(Item item) {
     return item == ITEM_PORT || item == ITEM_N2K_PORT || item == ITEM_ALARM || item == ITEM_TONE ||
-           item == ITEM_TIMEZONE || item == ITEM_NIGHT;
+           item == ITEM_TIMEZONE || item == ITEM_NIGHT || item == ITEM_HELM;
 }
 
 // ---------------------------------------------------------------------------
@@ -517,7 +536,12 @@ void handleN2kPacket(const char* text, int len, IPAddress sender, uint32_t now) 
             float celsius;
             if (parseYdRawLine(text + start, i - start, frame)) {
                 uint32_t days, tenthMillis;
+                uint8_t percent;
                 if (exhaustSelector.onFrame(frame, now, celsius)) exhaust.onReading(celsius, now);
+                else if (helmBrightness.onFrame(frame, settings.helmGroup, percent)) {
+                    helmLevel = raymarineLevel(percent);
+                    applyDisplayMode();   // wirkt sofort, die Anzeige folgt beim naechsten Zeichnen
+                }
                 else if (frame.pgn == PGN_SYSTEM_TIME && decodeSystemTime(frame.data, frame.length, days, tenthMillis))
                     busClock.onTime(days, tenthMillis, now);
             }
@@ -830,7 +854,11 @@ void renderMenu() {
         int i = first + row;
         bool sel = i == menuIndex;
         char value[12] = "";
-        if (i == ITEM_NIGHT) snprintf(value, sizeof(value), "Stufe %u", settings.nightLevel);
+        if (i == ITEM_NIGHT) {
+            if (helmLevel && settings.helmGroup) snprintf(value, sizeof(value), "Brücke %d", helmLevel);
+            else snprintf(value, sizeof(value), "Stufe %u", settings.nightLevel);
+        }
+        if (i == ITEM_HELM) snprintf(value, sizeof(value), "%s", helmGroupName(settings.helmGroup));
         if (i == ITEM_TONE) snprintf(value, sizeof(value), "%u Hz", settings.toneHz);
         if (i == ITEM_TIMEZONE) formatUtcOffset(value, sizeof(value), settings.utcOffset);
         char sig[64];
@@ -954,6 +982,18 @@ void renderDetail(uint32_t now) {
                 else tft.drawRect(x, 118, 10, 20, pal.muted);
             }
         }
+    } else if (item == ITEM_HELM) {
+        char state[24] = "";
+        if (testHelmGroup == settings.helmGroup && settings.helmGroup != HELM_GROUP_OFF) {
+            if (helmLevel) snprintf(state, sizeof(state), "zuletzt Stufe %d", helmLevel);
+            else snprintf(state, sizeof(state), "noch keine Meldung");
+        }
+        snprintf(sig, sizeof(sig), "%s|%s", helmGroupName(testHelmGroup), state);
+        if (changed(R_EDITOR, sig)) {
+            tft.fillRect(0, 112, 320, 36, pal.bg);
+            int w = drawText(helmGroupName(testHelmGroup), 8, 114, 4, pal.ink, pal.bg, ALIGN_LEFT);
+            if (state[0]) drawText(state, 8 + w + 16, 120, 2, pal.muted, pal.bg, ALIGN_LEFT);
+        }
     } else if (changed(R_EDITOR, "action")) {
         tft.fillRect(0, 112, 320, 36, pal.bg);
     }
@@ -984,6 +1024,7 @@ void renderDetail(uint32_t now) {
     if (item == ITEM_TONE) footer("Auf/ab: Tonhöhe   Drücken: speichern");
     else if (item == ITEM_TIMEZONE) footer("Auf/ab: Zeitzone   Drücken: speichern");
     else if (item == ITEM_NIGHT) footer("Auf/ab: Stufe   Drücken: speichern");
+    else if (item == ITEM_HELM) footer("Auf/ab: Gruppe   Drücken: speichern");
     else footer(itemIsLocal(item) ? "Drücken: speichern   Taste links: zurück" : "Drücken: senden   Taste links: zurück");
 }
 
@@ -1054,8 +1095,9 @@ uint8_t shownPercent = 0;
 void applyDisplayMode() {
     bool preview = screen == UiScreen::Detail && detailItem == ITEM_NIGHT;
     bool night = settings.dark || preview;
-    uint8_t percent = night ? nightBacklightPercent(preview ? testNightLevel : settings.nightLevel)
-                            : BACKLIGHT_DAY_PERCENT;
+    int level = preview ? testNightLevel
+                        : (helmLevel && settings.helmGroup ? helmLevel : settings.nightLevel);
+    uint8_t percent = night ? nightBacklightPercent(level) : BACKLIGHT_DAY_PERCENT;
     bool first = !displayModeSet;
     displayModeSet = true;
     if (first || night != shownNight) {
@@ -1099,7 +1141,8 @@ void openDetail(Item item) {
         case ITEM_ALARM: setEditor(settings.alarmLimit, 3, 0, "°C"); break;
         case ITEM_TONE: testToneHz = settings.toneHz; break;
         case ITEM_TIMEZONE: testUtcOffset = settings.utcOffset; break;
-        case ITEM_NIGHT: testNightLevel = settings.nightLevel; break;
+        case ITEM_NIGHT: testNightLevel = helmLevel && settings.helmGroup ? helmLevel : settings.nightLevel; break;
+        case ITEM_HELM: testHelmGroup = settings.helmGroup; break;
         default: break;
     }
     show(UiScreen::Detail);
@@ -1175,8 +1218,19 @@ void submitDetail() {
             break;
         case ITEM_NIGHT:
             settings.nightLevel = static_cast<uint8_t>(testNightLevel);
+            helmLevel = 0;   // eigene Einstellung gilt bis zur naechsten Meldung der Gruppe
             saveSettings();
             snprintf(messages[detailItem], sizeof(messages[0]), "Nachtstufe %d gespeichert.", testNightLevel);
+            break;
+        case ITEM_HELM:
+            if (testHelmGroup != settings.helmGroup) helmLevel = 0;
+            settings.helmGroup = static_cast<uint8_t>(testHelmGroup);
+            saveSettings();
+            applyDisplayMode();
+            if (settings.helmGroup == HELM_GROUP_OFF)
+                snprintf(messages[detailItem], sizeof(messages[0]), "Folgen ausgeschaltet.");
+            else
+                snprintf(messages[detailItem], sizeof(messages[0]), "Folgt nachts %s.", helmGroupName(settings.helmGroup));
             break;
         case ITEM_TIMEZONE: {
             settings.utcOffset = static_cast<int8_t>(testUtcOffset);
@@ -1234,6 +1288,13 @@ void handleKey(int key) {
                     messages[ITEM_NIGHT][0] = 0;
                     applyDisplayMode();
                 }
+                if (key == K_LEFT) show(UiScreen::Menu);
+                break;
+            }
+            if (detailItem == ITEM_HELM) {
+                if (key == K_UP && testHelmGroup < HELM_GROUP_MAX) testHelmGroup++;
+                if (key == K_DOWN && testHelmGroup > HELM_GROUP_OFF) testHelmGroup--;
+                if (key == K_UP || key == K_DOWN) messages[ITEM_HELM][0] = 0;
                 if (key == K_LEFT) show(UiScreen::Menu);
                 break;
             }
@@ -1304,6 +1365,10 @@ void consoleStatus() {
     consolePrint(line);
     if (settings.dark) snprintf(line, sizeof(line), "Anzeige         : Nacht, Stufe %u", settings.nightLevel);
     else snprintf(line, sizeof(line), "Anzeige         : Tag (Nachtstufe %u)", settings.nightLevel);
+    consolePrint(line);
+    if (settings.helmGroup == HELM_GROUP_OFF) snprintf(line, sizeof(line), "Helligkeit folgt: aus");
+    else if (helmLevel) snprintf(line, sizeof(line), "Helligkeit folgt: %s, zuletzt Stufe %d", helmGroupName(settings.helmGroup), helmLevel);
+    else snprintf(line, sizeof(line), "Helligkeit folgt: %s, noch keine Meldung", helmGroupName(settings.helmGroup));
     consolePrint(line);
     snprintf(line, sizeof(line), "Port ChainCounter: %u, Port NMEA2000: %u",
              static_cast<unsigned>(settings.chainPort), static_cast<unsigned>(settings.n2kPort));
