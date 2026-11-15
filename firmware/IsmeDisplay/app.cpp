@@ -1044,6 +1044,10 @@ int pollKeys(uint32_t now) {
 
 // Tag: helle Farben, volle Helligkeit. Nacht: rote Farben, eingestellte Stufe.
 // Auf der Seite "Nachthelligkeit" wird die gewaehlte Stufe sofort vorgefuehrt.
+// displayModeSet: erst nach dem ersten Aufruf sind Farben und Helligkeit
+// wirklich gesetzt. Ohne diesen Merker blieb beim Start im Tag-Modus die
+// Farbtabelle leer (alles schwarz), weil shownNight schon "Tag" anzeigte.
+bool displayModeSet = false;
 bool shownNight = false;
 uint8_t shownPercent = 0;
 
@@ -1052,12 +1056,14 @@ void applyDisplayMode() {
     bool night = settings.dark || preview;
     uint8_t percent = night ? nightBacklightPercent(preview ? testNightLevel : settings.nightLevel)
                             : BACKLIGHT_DAY_PERCENT;
-    if (night != shownNight) {
+    bool first = !displayModeSet;
+    displayModeSet = true;
+    if (first || night != shownNight) {
         applyPalette(night);
         shownNight = night;
         fullRedraw = true;
     }
-    if (percent != shownPercent) {
+    if (first || percent != shownPercent) {
         setBacklight(percent);
         shownPercent = percent;
     }
