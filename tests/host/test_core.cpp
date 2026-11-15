@@ -17,11 +17,9 @@ static void sentence(char* out, const char* body) { nmeaSentence(out, 128, body)
 
 static void testWindlass() {
     WindlassData d;
-    CHECK(parse("$ISLWND,12.4,0,24.1,17,86400,3605*07", d) == ParseResult::Data);
-    NEAR(d.lengthM, 12.4, 1e-4); CHECK(!d.directionUp); NEAR(d.vccVolt, 24.1, 1e-4);
-    CHECK(d.systemStarts == 17 && d.totalRuntimeS == 86400 && d.actualRuntimeS == 3605);
+    // Alter Satz (bis ChainCounter FW 1.2.1) wird nicht mehr ausgewertet
+    CHECK(parse("$ISLWND,12.4,0,24.1,17,86400,3605*07", d) == ParseResult::OtherSentence);
 
-    // Neues Format ab ChainCounter FW 1.3.0
     CHECK(parse("$PXISWND,12.4,0,24.1,17,86400,3605*43", d) == ParseResult::Data);
     NEAR(d.lengthM, 12.4, 1e-4); CHECK(!d.directionUp); NEAR(d.vccVolt, 24.1, 1e-4);
     CHECK(d.systemStarts == 17 && d.totalRuntimeS == 86400 && d.actualRuntimeS == 3605);
@@ -29,26 +27,26 @@ static void testWindlass() {
     CHECK(parse("$PXISWNS,C*37", d) == ParseResult::OtherSentence);
 
     char s[128];
-    sentence(s, "ISLWND,-1.2,1,12.0,1,0,0");
+    sentence(s, "PXISWND,-1.2,1,12.0,1,0,0");
     strcat(s, "\r\n");
     CHECK(parse(s, d) == ParseResult::Data); NEAR(d.lengthM, -1.2, 1e-4); CHECK(d.directionUp);
 
-    char lower[64] = "$ISLWND,1.0,0,12.0,1,0,0*";
-    char cs[4]; snprintf(cs, sizeof(cs), "%02x", nmeaChecksum("ISLWND,1.0,0,12.0,1,0,0", 23)); strcat(lower, cs);
+    char lower[64] = "$PXISWND,1.0,0,12.0,1,0,0*";
+    char cs[4]; snprintf(cs, sizeof(cs), "%02x", nmeaChecksum("PXISWND,1.0,0,12.0,1,0,0", 24)); strcat(lower, cs);
     CHECK(parse(lower, d) == ParseResult::Data);
 
-    sentence(s, "ISLWND,1.0,0,12.0,1,-1,0"); CHECK(parse(s, d) == ParseResult::Data); CHECK(d.totalRuntimeS == 4294967295u);
-    sentence(s, "ISLWND,1.0,0,12.0,1,4294967295,0"); CHECK(parse(s, d) == ParseResult::Data); CHECK(d.totalRuntimeS == 4294967295u);
+    sentence(s, "PXISWND,1.0,0,12.0,1,-1,0"); CHECK(parse(s, d) == ParseResult::Data); CHECK(d.totalRuntimeS == 4294967295u);
+    sentence(s, "PXISWND,1.0,0,12.0,1,4294967295,0"); CHECK(parse(s, d) == ParseResult::Data); CHECK(d.totalRuntimeS == 4294967295u);
 
     const char* bad[] = {
-        "ISLWND,12.4,0,24.1,17,86400,3605*07", "$ISLWND,12.4,0,24.1,17,86400,3605",
-        "$ISLWND,12.4,0,24.1,17,86400,3605*08", "$ISLWND,12.4,0,24.1,17,86400,3605*7",
+        "PXISWND,12.4,0,24.1,17,86400,3605*07", "$PXISWND,12.4,0,24.1,17,86400,3605",
+        "$PXISWND,12.4,0,24.1,17,86400,3605*08", "$PXISWND,12.4,0,24.1,17,86400,3605*7",
     };
     for (const char* b : bad) CHECK(parse(b, d) == ParseResult::Invalid);
     const char* badBodies[] = {
-        "ISLWND,12.4,0,24.1,17,86400", "ISLWND,12.4,0,24.1,17,86400,3605,1", "ISLWND,12.4,2,24.1,17,86400,3605",
-        "ISLWND,NaN,0,24.1,17,86400,3605", "ISLWND,1e3,0,24.1,17,86400,3605", "ISLWND,12.4,0,24.1,1.5,86400,3605",
-        "ISLWND,12.4,0,24.1,17,4294967296,3605", "ISLWND,,0,24.1,17,86400,3605",
+        "PXISWND,12.4,0,24.1,17,86400", "PXISWND,12.4,0,24.1,17,86400,3605,1", "PXISWND,12.4,2,24.1,17,86400,3605",
+        "PXISWND,NaN,0,24.1,17,86400,3605", "PXISWND,1e3,0,24.1,17,86400,3605", "PXISWND,12.4,0,24.1,1.5,86400,3605",
+        "PXISWND,12.4,0,24.1,17,4294967296,3605", "PXISWND,,0,24.1,17,86400,3605",
     };
     for (const char* b : badBodies) { sentence(s, b); CHECK(parse(s, d) == ParseResult::Invalid); }
 
@@ -58,11 +56,11 @@ static void testWindlass() {
 
 static void testCommands() {
     char c[48], e[48];
-    buildCommand(c, sizeof(c), Command::SetFactor, 4200); CHECK(strcmp(c, "$ISLWNS,K,0.42*4F") == 0);
-    buildCommand(c, sizeof(c), Command::ZeroCounter, 0); CHECK(strcmp(c, "$ISLWNS,C*73") == 0);
-    buildCommand(c, sizeof(c), Command::Restart, 0); CHECK(strcmp(c, "$ISLWNS,R*62") == 0);
-    buildCommand(c, sizeof(c), Command::SetLength, 25); sentence(e, "ISLWNS,C,25"); CHECK(strcmp(c, e) == 0);
-    buildCommand(c, sizeof(c), Command::SetDebounce, 10); sentence(e, "ISLWNS,S,10"); CHECK(strcmp(c, e) == 0);
+    buildCommand(c, sizeof(c), Command::SetFactor, 4200); CHECK(strcmp(c, "$PXISWNS,K,0.42*0B") == 0);
+    buildCommand(c, sizeof(c), Command::ZeroCounter, 0); CHECK(strcmp(c, "$PXISWNS,C*37") == 0);
+    buildCommand(c, sizeof(c), Command::Restart, 0); CHECK(strcmp(c, "$PXISWNS,R*26") == 0);
+    buildCommand(c, sizeof(c), Command::SetLength, 25); sentence(e, "PXISWNS,C,25"); CHECK(strcmp(c, e) == 0);
+    buildCommand(c, sizeof(c), Command::SetDebounce, 10); sentence(e, "PXISWNS,S,10"); CHECK(strcmp(c, e) == 0);
     char f[16];
     formatFactor(f, sizeof(f), 4000); CHECK(strcmp(f, "0.4") == 0);
     formatFactor(f, sizeof(f), 10); CHECK(strcmp(f, "0.001") == 0);
