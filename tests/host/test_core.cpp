@@ -217,6 +217,30 @@ static void testConsole() {
     CHECK(!validPassword("12345678901234567890123456789012345678901234567890123456789012345"));
 }
 
+static void testPages() {
+    PageSelector p;
+    CHECK(p.current() == Page::Chain && !p.left());
+    CHECK(p.right() && p.current() == Page::N2k);
+    CHECK(p.right() && p.current() == Page::Clock && !p.right());
+    // Alarm auf der Uhrseite: zur Seite NMEA2000 und nach dem Alarm zurueck
+    CHECK(!p.onAlarm(false));
+    CHECK(p.onAlarm(true) && p.current() == Page::N2k);
+    CHECK(!p.onAlarm(true) && p.current() == Page::N2k);
+    CHECK(p.onAlarm(false) && p.current() == Page::Clock);
+    // Waehrend des Alarms selbst zur Uhr zurueck: kein erneuter Sprung, solange der Alarm anhaelt
+    CHECK(p.onAlarm(true) && p.current() == Page::N2k);
+    CHECK(p.right() && p.current() == Page::Clock);
+    CHECK(!p.onAlarm(true) && p.current() == Page::Clock);
+    CHECK(!p.onAlarm(false) && p.current() == Page::Clock);
+    // Nach dem Sprung selbst geblaettert: nach dem Alarm nicht zurueck
+    CHECK(p.onAlarm(true) && p.current() == Page::N2k);
+    CHECK(p.left() && p.current() == Page::Chain);
+    CHECK(!p.onAlarm(false) && p.current() == Page::Chain);
+    // Alarm auf einer anderen Seite: kein Wechsel
+    CHECK(!p.onAlarm(true) && p.current() == Page::Chain);
+    CHECK(!p.onAlarm(false));
+}
+
 static void testBacklight() {
     CHECK(nightBacklightPercent(NIGHT_LEVEL_MIN) == 1);
     CHECK(nightBacklightPercent(NIGHT_LEVEL_MAX) == 100);
@@ -258,7 +282,7 @@ static void testRaymarineBrightness() {
 
 int main() {
     testWindlass(); testCommands(); testYdRaw(); testExhaust(); testChain(); testClock(); testFormat();
-    testConsole(); testBacklight(); testRaymarineBrightness();
+    testConsole(); testBacklight(); testRaymarineBrightness(); testPages();
     if (failures) { printf("%d Fehler\n", failures); return 1; }
     printf("ALLE TESTS OK\n");
     return 0;

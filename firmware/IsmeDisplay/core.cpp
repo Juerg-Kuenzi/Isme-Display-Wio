@@ -336,6 +336,40 @@ void formatFactor(char* out, size_t size, long v) {
     snprintf(out, size, "%ld.%s", whole, digits);
 }
 
+// ---------- Seiten der Hauptanzeige ----------
+
+bool PageSelector::left() {
+    if (page_ == Page::Chain) return false;
+    page_ = static_cast<Page>(static_cast<int>(page_) - 1);
+    autoSwitched_ = false;
+    return true;
+}
+
+bool PageSelector::right() {
+    if (static_cast<int>(page_) == PAGE_COUNT - 1) return false;
+    page_ = static_cast<Page>(static_cast<int>(page_) + 1);
+    autoSwitched_ = false;
+    return true;
+}
+
+bool PageSelector::onAlarm(bool alarmActive) {
+    bool rising = alarmActive && !alarmBefore_;
+    alarmBefore_ = alarmActive;
+    if (rising && page_ == Page::Clock) {
+        page_ = Page::N2k;
+        autoSwitched_ = true;
+        return true;
+    }
+    if (!alarmActive && autoSwitched_) {
+        autoSwitched_ = false;
+        if (page_ == Page::N2k) {
+            page_ = Page::Clock;
+            return true;
+        }
+    }
+    return false;
+}
+
 // ---------- Hintergrundbeleuchtung ----------
 
 uint8_t nightBacklightPercent(int level) {
