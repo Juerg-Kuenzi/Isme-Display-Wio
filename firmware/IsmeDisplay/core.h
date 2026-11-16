@@ -161,6 +161,27 @@ void formatOneDecimal(char* out, size_t size, float value);
 void formatDuration(char* out, size_t size, uint32_t seconds);   // 01:00:05, 1 d 00:00:00
 void formatFactor(char* out, size_t size, long tenThousandths);  // 4000 -> 0.4
 
+// ---------- Seiten der Hauptanzeige ----------
+
+// Joystick links/rechts blaettert. Auf der Uhrseite schaltet ein neuer
+// Abgasalarm zur Seite NMEA2000 um. Endet der Alarm und hat inzwischen
+// niemand geblaettert, geht es zur Uhr zurueck.
+enum class Page : uint8_t { Chain = 0, N2k = 1, Clock = 2 };
+const int PAGE_COUNT = 3;
+
+class PageSelector {
+public:
+    Page current() const { return page_; }
+    bool left();                        // true, wenn die Seite gewechselt hat
+    bool right();
+    bool onAlarm(bool alarmActive);     // regelmaessig aufrufen; true bei Seitenwechsel
+
+private:
+    Page page_ = Page::Chain;
+    bool autoSwitched_ = false;
+    bool alarmBefore_ = false;
+};
+
 // ---------- Hintergrundbeleuchtung ----------
 
 // Nachtstufen 1 bis 10. Das Auge empfindet Helligkeit etwa logarithmisch,

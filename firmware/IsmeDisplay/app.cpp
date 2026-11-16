@@ -381,7 +381,7 @@ const char* const ITEM_TEXT[ITEM_COUNT] = {
 };
 
 UiScreen screen = UiScreen::Main;
-int page = 0;          // 0 Ankerkette, 1 NMEA2000
+PageSelector pages;    // Ankerkette, NMEA2000, Uhrzeit
 int menuIndex = 0;
 Item detailItem = ITEM_ZERO;
 uint16_t testToneHz = TONE_DEFAULT_HZ;   // Tonhoehe auf der Seite "Ton testen"
@@ -639,6 +639,7 @@ void serviceBuzzer(uint32_t now) {
 // ---------------------------------------------------------------------------
 enum Region {
     R_TITLE, R_LENGTH, R_DIRECTION, R_VCC, R_BOTTOM, R_EXHAUST, R_LIMIT, R_CLOCK_LABEL, R_CLOCK,
+    R_BIG_CLOCK,
     R_ROW0,   // R_ROW0 .. R_ROW0 + 11 fuer Menue- und Infozeilen
     R_DETAIL_CURRENT = R_ROW0 + 12, R_EDITOR, R_MESSAGE, R_STATUS, R_HINT
 };
@@ -647,9 +648,9 @@ void titleBar(const char* title, bool dots) {
     tft.fillRect(0, 0, 320, 32, pal.bg);
     drawText(title, 8, 4, 4, pal.ink, pal.bg, ALIGN_LEFT);
     if (dots) {
-        for (int i = 0; i < 2; i++) {
-            int x = 290 + i * 16;
-            if (i == page) tft.fillCircle(x, 16, 5, pal.ink);
+        for (int i = 0; i < PAGE_COUNT; i++) {
+            int x = 306 - (PAGE_COUNT - 1 - i) * 16;
+            if (i == static_cast<int>(pages.current())) tft.fillCircle(x, 16, 5, pal.ink);
             else tft.drawCircle(x, 16, 5, pal.ink);
         }
     }
@@ -813,6 +814,65 @@ void renderN2kPage(uint32_t now) {
             warning = true;
         }
         if (clockWarning(now, w, sizeof(w))) {
+            snprintf(l1[0] ? l2 : l1, sizeof(l1), "%s", w);
+            warning = true;
+        }
+    }
+    snprintf(sig, sizeof(sig), "%s|%s|%d", l1, l2, warning);
+    if (changed(R_BOTTOM, sig)) {
+        tft.fillRect(0, 189, 320, 51, pal.bg);
+        if (warning) {
+            tft.fillRect(0, 192, 320, 48, pal.warning);
+            drawText(l1, 8, 196, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
+            if (l2[0]) drawText(l2, 8, 216, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
+        }
+    }
+}
+
+// Grosse Uhr fuer die Nachtfahrt in 7-Segment-Schrift (Schrift 7, doppelt gross:
+// Ziffern 96 Pixel hoch, groesser als die Kettenlaenge). Ein Abgasalarm
+// schaltet zur Seite NMEA2000 (PageSelector), Warnungen stehen unten im Balken.
+void renderClockPage(uint32_t now) {
+    if (fullRedraw) {
+        titleBar("Uhrzeit", true);
+        tft.drawFastHLine(0, 188, 320, pal.rule);
+    }
+    char s[48], sig[120];
+    char tz[12];
+    formatUtcOffset(tz, sizeof(tz), settings.utcOffset);
+    snprintf(s, sizeof(s), "Ortszeit %s", tz);
+    if (changed(R_CLOCK_LABEL, s)) {
+        tft.fillRect(0, 36, 320, 18, pal.bg);
+        drawText(s, 8, 38, 2, pal.muted, pal.bg, ALIGN_LEFT);
+    }
+    bool clockFresh = busClock.isFresh(now);
+    if (busClock.hasTime()) formatClock(s, sizeof(s), busClock.utcMillis(now), settings.utcOffset);
+    else snprintf(s, sizeof(s), "--:--");
+    snprintf(sig, sizeof(sig), "%s|%d", s, clockFresh);
+    if (changed(R_BIG_CLOCK, sig)) {
+        tft.fillRect(0, 58, 320, 128, pal.bg);
+        tft.setTextDatum(TC_DATUM);
+        tft.setTextPadding(0);
+        tft.setTextColor(clockFresh ? pal.ink : pal.muted, pal.bg);
+        tft.setTextSize(2);
+        if (tft.textWidth(s, 7) > 316) tft.setTextSize(1);   // passt nicht: einfache Groesse
+        int height = tft.fontHeight(7);
+        tft.drawString(s, 160, 58 + (128 - height) / 2, 7);
+        tft.setTextSize(1);
+    }
+
+    char l1[72] = "", l2[72] = "", w[72];
+    bool warning = false;
+    if (exhaust.alarmActive()) {
+        alarmLine(l1, sizeof(l1));
+        if (!exhaust.muted()) snprintf(l2, sizeof(l2), "Taste Mitte: Ton aus");
+        warning = true;
+    } else {
+        if (clockWarning(now, w, sizeof(w))) {
+            snprintf(l1, sizeof(l1), "%s", w);
+            warning = true;
+        }
+        if (n2kWarning(now, w, sizeof(w))) {
             snprintf(l1[0] ? l2 : l1, sizeof(l1), "%s", w);
             warning = true;
         }
@@ -1035,8 +1095,11 @@ void render(uint32_t now) {
     }
     switch (screen) {
         case UiScreen::Main:
-            if (page == 0) renderChainPage(now);
-            else renderN2kPage(now);
+            switch (pages.current()) {
+                case Page::Chain: renderChainPage(now); break;
+                case Page::N2k: renderN2kPage(now); break;
+                case Page::Clock: renderClockPage(now); break;
+            }
             break;
         case UiScreen::Menu: renderMenu(); break;
         case UiScreen::Detail: renderDetail(now); break;
@@ -1255,8 +1318,8 @@ void handleKey(int key) {
     }
     switch (screen) {
         case UiScreen::Main:
-            if (key == K_LEFT && page != 0) { page = 0; fullRedraw = true; }
-            if (key == K_RIGHT && page != 1) { page = 1; fullRedraw = true; }
+            if (key == K_LEFT && pages.left()) fullRedraw = true;
+            if (key == K_RIGHT && pages.right()) fullRedraw = true;
             if (key == K_MENU) show(UiScreen::Menu);
             break;
         case UiScreen::Menu:
@@ -1459,6 +1522,10 @@ void appLoop() {
     }
     chain.onTick(now);
     exhaust.update(now, settings.alarmLimit);
+    if (pages.onAlarm(exhaust.alarmActive()) && screen == UiScreen::Main) {
+        fullRedraw = true;
+        renderNeeded = true;
+    }
     serviceBuzzer(now);
     if (renderNeeded || now - lastRender >= 250) {
         render(now);
