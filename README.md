@@ -93,6 +93,7 @@ status
 | `portal=<id>` | VRM Portal ID des Cerbo (*Einstellungen > VRM online portal*) |
 | `mqttpass=<pw>` | MQTT-Passwort des Cerbo (Profil *Secured* oder *Weak*); wird nie angezeigt |
 | `motor=<n>` | Motorsignal: `0` aus, `1`–`4` Digitaleingang des Cerbo |
+| `log=1` / `log=0` | Protokoll für die Fehlersuche: jede Sekunde ein Lebenszeichen, jeder Schritt der Cerbo-Verbindung mit Dauer, Tasten, langsame Abschnitte der Hauptschleife. Nur bis zum nächsten Neustart. |
 | `help` | Befehlsliste |
 
 Hinweise zum Terminalprogramm:

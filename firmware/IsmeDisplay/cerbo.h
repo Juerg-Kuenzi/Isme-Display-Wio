@@ -39,6 +39,9 @@ void reset();
 
 isme::EngineState engineState();
 
+// Protokoll an die Konsole (nullptr = aus)
+void setLogger(void (*fn)(const char*));
+
 // Zustand in Worten, z. B. "verbunden, Motor laeuft"
 void status(char* out, size_t size);
 

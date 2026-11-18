@@ -8,6 +8,7 @@
 // FlashStorageClass mit fester Adresse (siehe Einstellungen im Flash).
 #include <FlashStorage_SAMD.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1452,6 +1453,26 @@ bool renderNeeded = true;
 // ---------------------------------------------------------------------------
 void consolePrint(const char* text) { Serial.println(text); }
 
+// Protokoll (log=1): nur im RAM, nach einem Neustart wieder aus. Jede Zeile wird
+// sofort gesendet, damit bei einem Haenger die letzte Zeile zeigt, wo es steht.
+bool logOn = false;
+void logLine(const char* text) {
+    Serial.println(text);
+    Serial.flush();
+}
+void applog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void applog(const char* fmt, ...) {
+    if (!logOn) return;
+    char text[120];
+    uint32_t ms = millis();
+    int n = snprintf(text, sizeof(text), "[%lu.%03lu] ", static_cast<unsigned long>(ms / 1000), static_cast<unsigned long>(ms % 1000));
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(text + n, sizeof(text) - n, fmt, ap);
+    va_end(ap);
+    logLine(text);
+}
+
 // Sofort anzeigen, bevor Speichern und Neuverbinden das Programm kurz aufhalten
 void consolePrintNow(const char* text) {
     Serial.println(text);
@@ -1524,6 +1545,7 @@ void handleConsoleLine(char* text) {
             consolePrint("  cerbo=<ip>   Adresse des Cerbo GX (MQTT, Port 8883, TLS)");
             consolePrint("  portal=<id>  VRM Portal ID des Cerbo");
             consolePrint("  mqttpass=<pw> MQTT-Passwort des Cerbo (Profil Secured/Weak)");
+            consolePrint("  log=1 / log=0 Protokoll an der Konsole ein/aus (Fehlersuche, nach Neustart aus)");
             consolePrint("  motor=<n>    Motorsignal: 0 = aus, 1-4 = Digitaleingang des Cerbo");
             break;
         case ConsoleCommand::Status:
@@ -1583,6 +1605,11 @@ void handleConsoleLine(char* text) {
             consolePrint(line);
             break;
         }
+        case ConsoleCommand::Log:
+            logOn = arg[0] == '1';
+            cerbo::setLogger(logOn ? logLine : nullptr);
+            consolePrint(logOn ? "OK: Protokoll ein. Jede Sekunde ein Lebenszeichen, dazu jeder Schritt der Cerbo-Verbindung." : "OK: Protokoll aus.");
+            break;
         case ConsoleCommand::Unknown:
             snprintf(line, sizeof(line), "FEHLER: unbekannter Befehl '%.60s' (help)", arg);
             consolePrint(line);
@@ -1622,13 +1649,35 @@ void appSetup() {
     fullRedraw = true;
 }
 
+// Fuer das Protokoll: Abschnitte der Schleife, die laenger als 300 ms brauchen
+uint32_t sectionStart = 0;
+void sectionBegin() { sectionStart = millis(); }
+void sectionEnd(const char* name) {
+    uint32_t d = millis() - sectionStart;
+    if (logOn && d > 300) applog("langsam: %s %lu ms", name, static_cast<unsigned long>(d));
+}
+
+uint32_t lastHeartbeat = 0;
+bool loggedWifi = false;
+
 void appLoop() {
     uint32_t now = millis();
-    serviceConsole();
-    serviceWifi(now);
-    pollUdp(now);
+    if (logOn && now - lastHeartbeat >= 1000) {
+        lastHeartbeat = now;
+        char st[64];
+        cerbo::status(st, sizeof(st));
+        static const char* const screenNames[] = {"Haupt", "Menue", "Einstellung", "Info"};
+        applog("lebt, WLAN %s, %s, Motorsignal %u: %s", wifiConnected ? "ja" : "nein",
+               screenNames[static_cast<int>(screen)], settings.engineInput, st);
+    }
+    sectionBegin(); serviceConsole(); sectionEnd("Konsole");
+    sectionBegin(); serviceWifi(now); sectionEnd("WLAN");
+    if (logOn && wifiConnected != loggedWifi) applog("WLAN %s", wifiConnected ? "verbunden" : "getrennt");
+    loggedWifi = wifiConnected;
+    sectionBegin(); pollUdp(now); sectionEnd("UDP");
     int key = pollKeys(now);
     if (key >= 0) {
+        if (logOn) applog("Taste %d", key);
         handleKey(key);
         renderNeeded = true;
         lastKeyAt = now;
@@ -1637,8 +1686,10 @@ void appLoop() {
     // Verbindungsaufbau zum Cerbo blockiert einige Sekunden: nur auf der
     // Hauptseite und wenn seit 10 s keine Taste gedrueckt wurde
     bool idle = screen == UiScreen::Main && now - lastKeyAt >= 10000;
+    sectionBegin();
     cerbo::service({settings.engineInput, settings.cerboHost, settings.portalId, settings.mqttPassword},
                    wifiConnected, idle, now);
+    sectionEnd("Cerbo");
     engineGate.onState(settings.engineInput ? cerbo::engineState() : EngineState::Unknown, now);
     exhaust.update(now, settings.alarmLimit, engineGate.monitorAllowed(exhaust.celsius(), now));
     if (pages.onAlarm(exhaust.alarmActive()) && screen == UiScreen::Main) {
@@ -1647,8 +1698,11 @@ void appLoop() {
     }
     serviceBuzzer(now);
     if (renderNeeded || now - lastRender >= 250) {
+        sectionBegin();
         render(now);
+        sectionEnd("Anzeige");
         lastRender = now;
         renderNeeded = false;
     }
+}
 }

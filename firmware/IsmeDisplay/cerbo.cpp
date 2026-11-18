@@ -6,6 +6,7 @@
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
 #include <rpcWiFi.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -45,8 +46,23 @@ bool ready = false;
 bool attempted = false;
 bool linkOpen = false;        // TLS-Verbindung (evtl. mit MQTT) besteht
 uint8_t activeInput = 0;
+void (*logger)(const char*) = nullptr;
+
+// Protokoll fuer die Fehlersuche (Konsole: log=1). Jede Zeile wird sofort
+// gesendet, damit bei einem Haenger die letzte Zeile zeigt, wo es steht.
+void trace(const char* fmt, ...) {
+    if (!logger) return;
+    char text[120];
+    int n = snprintf(text, sizeof(text), "[%lu.%03lu] cerbo: ", millis() / 1000, millis() % 1000);
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(text + n, sizeof(text) - n, fmt, ap);
+    va_end(ap);
+    logger(text);
+}
 
 void onMessage(char* topic, uint8_t* payload, unsigned int length) {
+    trace("Meldung %s = %.*s", topic, static_cast<int>(length > 40 ? 40 : length), reinterpret_cast<const char*>(payload));
     if (strcmp(topic, stateTopic) != 0) return;
     long v;
     if (!isme::parseVictronInt(reinterpret_cast<const char*>(payload), length, v)) {
@@ -67,9 +83,12 @@ void onMessage(char* topic, uint8_t* payload, unsigned int length) {
 // Nur wenn eine Verbindung besteht, sonst keine RPC-Aufrufe
 void closeLink() {
     if (linkOpen) {
+        uint32_t t = millis();
+        trace("trenne ...");
         if (mqtt.state() == MQTT_CONNECTED) mqtt.disconnect();   // ruft auch tls.stop()
         tls.stop();
         linkOpen = false;
+        trace("-> getrennt (%lu ms)", millis() - t);
     }
     engine = isme::EngineState::Unknown;
 }
@@ -105,21 +124,40 @@ void connectNow(const Config& c, uint32_t now) {
     unsigned long wait = static_cast<unsigned long>(retryMs / 1000);
 
     IPAddress ip;
-    if (!resolve(c.host, ip)) {
+    uint32_t t = millis();
+    trace("Versuch: Adresse %s aufloesen ...", c.host);
+    bool resolved = resolve(c.host, ip);
+    trace("-> %s %u.%u.%u.%u (%lu ms)", resolved ? "ok" : "FEHLER", ip[0], ip[1], ip[2], ip[3], millis() - t);
+    if (!resolved) {
         snprintf(lastText, sizeof(lastText), "Adresse %.24s unbekannt, neuer Versuch in %lu s", c.host, wait);
         return;
     }
     // 1. Ist der Cerbo ueberhaupt erreichbar? (mit Zeitgrenze)
     {
         WiFiClient probe;
-        if (!probe.connect(ip, MQTT_TLS_PORT, TCP_PROBE_MS)) {
+        t = millis();
+        trace("TCP-Test Port %u ...", MQTT_TLS_PORT);
+        bool ok = probe.connect(ip, MQTT_TLS_PORT, TCP_PROBE_MS);
+        trace("-> %s (%lu ms)", ok ? "ok" : "FEHLER, nicht erreichbar", millis() - t);
+        if (!ok) {
             snprintf(lastText, sizeof(lastText), "Cerbo nicht erreichbar (Port 8883), neuer Versuch in %lu s", wait);
             return;
         }
+        t = millis();
         probe.stop();
+        trace("TCP-Test beendet (%lu ms)", millis() - t);
     }
     // 2. TLS ohne Zertifikatspruefung, Handshake mit Zeitgrenze
-    if (!tls.connect(ip, MQTT_TLS_PORT, TLS_TIMEOUT_MS)) {
+    t = millis();
+    trace("TLS-Handshake ...");
+    bool tlsOk = tls.connect(ip, MQTT_TLS_PORT, TLS_TIMEOUT_MS);
+    if (tlsOk) trace("-> ok (%lu ms)", millis() - t);
+    else {
+        char err[100] = "";
+        int code = tls.lastError(err, sizeof(err));
+        trace("-> FEHLER %d %s (%lu ms)", code, err, millis() - t);
+    }
+    if (!tlsOk) {
         snprintf(lastText, sizeof(lastText), "TLS-Verbindung fehlgeschlagen, neuer Versuch in %lu s", wait);
         return;
     }
@@ -131,7 +169,11 @@ void connectNow(const Config& c, uint32_t now) {
     mqtt.setKeepAlive(45);
     mqtt.setSocketTimeout(MQTT_SOCKET_TIMEOUT_S);
     // Benutzername beliebig (mind. ein Zeichen), Passwort wie im Cerbo eingestellt
-    if (!mqtt.connect("isme-display-wio", "isme", c.password)) {
+    t = millis();
+    trace("MQTT-Anmeldung ...");
+    bool mqttOk = mqtt.connect("isme-display-wio", "isme", c.password);
+    trace("-> %s, Zustand %d (%lu ms)", mqttOk ? "ok" : "FEHLER", mqtt.state(), millis() - t);
+    if (!mqttOk) {
         int st = mqtt.state();
         if (st == MQTT_CONNECT_BAD_CREDENTIALS || st == MQTT_CONNECT_UNAUTHORIZED)
             snprintf(lastText, sizeof(lastText), "MQTT-Passwort falsch, neuer Versuch in %lu s", wait);
@@ -141,6 +183,8 @@ void connectNow(const Config& c, uint32_t now) {
         return;
     }
     retryMs = 0;
+    t = millis();
+    trace("abonniere %s ...", stateTopic);
     mqtt.subscribe(stateTopic);
     publishKeepalive(true, c.portal);   // einmal alle abonnierten Werte senden lassen
     char topic[64];
@@ -148,6 +192,7 @@ void connectNow(const Config& c, uint32_t now) {
     mqtt.publish(topic, "");            // und den Zustand ausdruecklich anfragen
     lastKeepalive = now;
     lastLoop = now;
+    trace("-> verbunden (%lu ms)", millis() - t);
     snprintf(lastText, sizeof(lastText), "verbunden, warte auf Eingang %u", c.input);
 }
 
@@ -184,6 +229,7 @@ void service(const Config& c, bool wifiUp, bool allowConnect, uint32_t now) {
         restart(now);
     }
     if (!ready) {   // WLAN gerade verbunden oder Einstellungen geaendert
+        trace("bereit, Eingang %u, %s, erster Versuch in %lu s", c.input, c.host, START_DELAY_MS / 1000);
         ready = true;
         readySince = now;
         attempted = false;
@@ -193,13 +239,20 @@ void service(const Config& c, bool wifiUp, bool allowConnect, uint32_t now) {
     if (linkOpen) {
         if (now - lastLoop < LOOP_INTERVAL_MS) return;
         lastLoop = now;
-        if (mqtt.loop()) {
+        uint32_t t = millis();
+        bool alive = mqtt.loop();
+        if (millis() - t > 200) trace("mqtt.loop langsam (%lu ms)", millis() - t);
+        if (alive) {
             if (now - lastKeepalive >= KEEPALIVE_MS) {
+                t = millis();
+                trace("Keepalive ...");
                 publishKeepalive(false, c.portal);
                 lastKeepalive = now;
+                trace("-> gesendet (%lu ms)", millis() - t);
             }
             return;
         }
+        trace("Verbindung verloren, MQTT-Zustand %d", mqtt.state());
         closeLink();   // Verbindung verloren
         retryMs = 0;
         scheduleRetry(now);
@@ -217,6 +270,11 @@ void service(const Config& c, bool wifiUp, bool allowConnect, uint32_t now) {
     }
     if (attempted && now - lastAttempt < retryMs) return;
     if (!allowConnect) {
+        static uint32_t lastWaitLog = 0;
+        if (now - lastWaitLog > 10000) {
+            trace("warte: nicht auf der Hauptseite oder Taste vor weniger als 10 s");
+            lastWaitLog = now;
+        }
         if (!attempted) snprintf(lastText, sizeof(lastText), "verbindet, sobald die Hauptseite angezeigt wird");
         return;
     }
@@ -224,6 +282,8 @@ void service(const Config& c, bool wifiUp, bool allowConnect, uint32_t now) {
 }
 
 isme::EngineState engineState() { return engine; }
+
+void setLogger(void (*fn)(const char*)) { logger = fn; }
 
 void status(char* out, size_t size) { snprintf(out, size, "%s", lastText); }
 

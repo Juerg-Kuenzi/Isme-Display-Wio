@@ -257,7 +257,7 @@ int raymarineLevel(uint8_t percent);
 const size_t SSID_MAX = 32;
 const size_t PASSWORD_MIN = 8, PASSWORD_MAX = 64;
 
-enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, CerboHost, Portal, MqttPassword, EngineInput, Unknown };
+enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, CerboHost, Portal, MqttPassword, EngineInput, Log, Unknown };
 
 // Wertet eine Zeile der USB-Konsole aus. Leerzeichen am Rand werden entfernt
 // (die Zeile wird dabei veraendert). arg zeigt bei Ssid/Password auf den Wert
