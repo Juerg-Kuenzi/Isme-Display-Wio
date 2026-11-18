@@ -844,6 +844,11 @@ void renderN2kPage(uint32_t now) {
                 if (engineGate.inGrace(now)) snprintf(l1, sizeof(l1), "Motor gestartet: Schonfrist");
                 break;
             case EngineState::Unknown:
+                if (engineGate.inStartupHold(now)) {
+                    snprintf(l1, sizeof(l1), "Warte auf Motorsignal vom Cerbo");
+                    snprintf(l2, sizeof(l2), "Abgasalarm ruht hoechstens 1 min");
+                    break;
+                }
                 snprintf(l1, sizeof(l1), "Kein Motorsignal vom Cerbo:");
                 snprintf(l2, sizeof(l2), "Abgasalarm wie ohne Motorsignal");
                 warning = true;
@@ -1606,7 +1611,7 @@ void handleConsoleLine(char* text) {
             testEngineInput = in;
             saveSettings();
             cerbo::reset();
-            if (in) snprintf(line, sizeof(line), "OK: Motorsignal von Geraete-ID %u, Verbindung in etwa 20 s (status).", in);
+            if (in) snprintf(line, sizeof(line), "OK: Motorsignal von Geraete-ID %u, Verbindung in wenigen Sekunden (status).", in);
             else snprintf(line, sizeof(line), "OK: Motorsignal aus.");
             consolePrint(line);
             break;
@@ -1716,6 +1721,7 @@ void appLoop() {
     cerbo::service({settings.engineInput, settings.cerboHost},
                    wifiConnected, idle, now);
     sectionEnd("Cerbo");
+    engineGate.setEnabled(settings.engineInput != 0, now);
     engineGate.onState(settings.engineInput ? cerbo::engineState() : EngineState::Unknown, now);
     exhaust.update(now, settings.alarmLimit, engineGate.monitorAllowed(exhaust.celsius(), now));
     if (pages.onAlarm(exhaust.alarmActive()) && screen == UiScreen::Main) {

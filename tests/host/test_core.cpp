@@ -289,6 +289,43 @@ static void testEngineGate() {
     CHECK(step(64, 0));
     CHECK(!step(44.5f, MIN));
 
+    // Ueberbrueckung beim Start: Motorsignal ein, noch keine Meldung -> 60 s kein Alarm
+    {
+        ExhaustMonitor ex2;
+        EngineGate g2;
+        auto step2 = [&](float c, uint32_t t) {
+            g2.setEnabled(true, t);
+            ex2.onReading(c, t);
+            g2.onReading(c);
+            ex2.update(t, 60, g2.monitorAllowed(c, t));
+            return ex2.alarmActive();
+        };
+        CHECK(!step2(64, 1000) && g2.inStartupHold(1000));
+        CHECK(!step2(64, 30000));
+        CHECK(step2(64, 62000) && !g2.inStartupHold(62000));   // kein Signal: wie ohne Motorsignal
+        // Meldung "aus" innerhalb der Frist: Alarm bleibt aus, spaeter Verbindungsverlust = normal
+        ExhaustMonitor ex3;
+        EngineGate g3;
+        g3.setEnabled(true, 0);
+        g3.onState(EngineState::Unknown, 0);
+        ex3.onReading(64, 2000); g3.onReading(64);
+        ex3.update(2000, 60, g3.monitorAllowed(64, 2000));
+        CHECK(!ex3.alarmActive());
+        g3.onState(EngineState::Off, 3000);
+        ex3.update(3000, 60, g3.monitorAllowed(64, 3000));
+        CHECK(!ex3.alarmActive() && !g3.inStartupHold(3000));
+        g3.onState(EngineState::Unknown, 10000);
+        CHECK(!g3.inStartupHold(10000) && g3.monitorAllowed(64, 10000));
+        // Motorsignal aus: keine Ueberbrueckung
+        EngineGate g4;
+        g4.setEnabled(false, 0);
+        CHECK(!g4.inStartupHold(1000) && g4.monitorAllowed(64, 1000));
+        // neu eingeschaltet: Frist beginnt neu
+        g3.setEnabled(false, 20000);
+        g3.setEnabled(true, 30000);
+        CHECK(g3.inStartupHold(31000) && !g3.inStartupHold(91000));
+    }
+
     // 1) Kaltstart: 28 -> 44.5, kein Alarm
     g.onState(EngineState::Off, 0);
     CHECK(!step(28, 0));

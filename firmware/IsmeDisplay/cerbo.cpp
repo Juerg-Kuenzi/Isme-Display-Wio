@@ -17,7 +17,7 @@
 //
 // Alle Netzwerkaufrufe laufen per RPC zum WLAN-Chip und halten die Hauptschleife
 // an, solange sie dauern. Deshalb:
-//  - Verbindungsaufbau erst 20 s nach der WLAN-Verbindung oder einer Aenderung,
+//  - Verbindungsaufbau erst 3 s nach der WLAN-Verbindung oder einer Aenderung,
 //    nur auf der Hauptseite ohne Bedienung (allowConnect). Der Aufbau hat im
 //    WLAN-Chip keine Zeitgrenze: meist unter 1 s, ist der Cerbo aus bis ~30 s.
 //    Ein eigener nicht-blockierender Aufbau fuehrte zu Abstuerzen.
@@ -30,7 +30,7 @@ namespace {
 
 const uint32_t RETRY_MIN_MS = 30000;
 const uint32_t RETRY_MAX_MS = 300000;
-const uint32_t START_DELAY_MS = 20000;
+const uint32_t START_DELAY_MS = 3000;          // WLAN nach dem Verbinden sicher bereit
 const uint32_t POLL_MS = 1000;
 const uint32_t POLL_SLOW_MS = 5000;           // wenn der Cerbo die Geraete-ID nicht kennt
 const uint32_t ANSWER_TIMEOUT_MS = 3000;
