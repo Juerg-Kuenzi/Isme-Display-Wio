@@ -137,7 +137,7 @@ Das Display liest den Zustand eines Digitaleingangs des Cerbo GX über MQTT im l
 
 Einrichtung:
 
-1. Cerbo: *Einstellungen > Dienste > MQTT Access* einschalten.
+1. Cerbo: *Einstellungen > Integrationen > MQTT-Zugang* einschalten (ab Werk aus; bis Venus OS 3.5x unter *Dienste*). Kontrolle vom PC: `Test-NetConnection <IP des Cerbo> -Port 8883` muss `TcpTestSucceeded : True` zeigen.
 2. Cerbo: den Digitaleingang auf den Typ **Generic I/O** stellen. Zustand *high* muss „Motor läuft“ bedeuten; bei Bedarf mit *Invert* umkehren. Ein geschlossener Kontakt (z. B. Relais an „Zündung ein“ des Motors) zieht den Eingang auf *low*.
 3. Display, USB-Konsole: `cerbo=<IP des Cerbo>`, `portal=<Portal ID>`, `mqttpass=<Passwort>`.
 4. Display: *Einstellungen > Motorsignal* auf den Eingang stellen (oder Konsole `motor=1`). Die Seite zeigt den Zustand der Verbindung, ebenso `status` an der Konsole. `motor=0` schaltet das Motorsignal wieder aus.
