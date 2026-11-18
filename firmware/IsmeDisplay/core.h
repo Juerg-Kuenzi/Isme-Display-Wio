@@ -123,8 +123,9 @@ public:
     float celsius() const { return celsius_; }
     bool isFresh(uint32_t now) const;
     uint32_t secondsSinceData(uint32_t now) const { return (now - lastAt_) / 1000; }
-    // Alarm ueber dem Grenzwert, Ende erst 1 Grad darunter
-    void update(uint32_t now, float limit);
+    // Alarm ueber dem Grenzwert, Ende erst 1 Grad darunter. allowed = false
+    // (Motor aus oder Schonfrist nach dem Start, siehe EngineGate) unterdrueckt ihn.
+    void update(uint32_t now, float limit, bool allowed = true);
     bool alarmActive() const { return alarm_; }
     bool muted() const { return muted_; }
     void mute() { if (alarm_) muted_ = true; }
@@ -160,6 +161,36 @@ private:
 void formatOneDecimal(char* out, size_t size, float value);
 void formatDuration(char* out, size_t size, uint32_t seconds);   // 01:00:05, 1 d 00:00:00
 void formatFactor(char* out, size_t size, long tenThousandths);  // 4000 -> 0.4
+
+// ---------- Motorsignal ----------
+//
+// Ein nasser Auspuff heizt sich nach dem Abstellen auf die Motorraumtemperatur
+// (~64 C) auf und wuerde den Abgasalarm ausloesen. Mit dem Signal "Motor laeuft"
+// (Cerbo-Digitaleingang ueber Zuendung) gilt:
+//   unbekannt (aus, keine Verbindung, keine Meldung): Ueberwachung wie bisher
+//   Motor aus: kein Abgasalarm
+//   nach dem Start: Schonfrist GRACE_MS. Alarm nur, wenn die Temperatur ueber
+//     den Wert beim Start + GRACE_RISE steigt (Warmstart faellt von ~64 C)
+//   danach: Ueberwachung wie bisher
+enum class EngineState : uint8_t { Unknown, Off, Running };
+
+class EngineGate {
+public:
+    static const uint32_t GRACE_MS = 10UL * 60 * 1000;
+    static constexpr float GRACE_RISE = 2.0f;
+    void onState(EngineState s, uint32_t now);
+    void onReading(float celsius);            // jede Abgastemperatur
+    EngineState state() const { return state_; }
+    bool inGrace(uint32_t now) const;
+    bool monitorAllowed(float celsius, uint32_t now) const;
+
+private:
+    EngineState state_ = EngineState::Unknown;
+    bool grace_ = false, startKnown_ = false;
+    uint32_t startAt_ = 0;
+    float startCelsius_ = 0, lastCelsius_ = 0;
+    bool hasLast_ = false;
+};
 
 // ---------- Seiten der Hauptanzeige ----------
 
@@ -226,7 +257,7 @@ int raymarineLevel(uint8_t percent);
 const size_t SSID_MAX = 32;
 const size_t PASSWORD_MIN = 8, PASSWORD_MAX = 64;
 
-enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, Unknown };
+enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, CerboHost, Portal, MqttPassword, Unknown };
 
 // Wertet eine Zeile der USB-Konsole aus. Leerzeichen am Rand werden entfernt
 // (die Zeile wird dabei veraendert). arg zeigt bei Ssid/Password auf den Wert
@@ -252,5 +283,15 @@ private:
 };
 bool validSsid(const char* s);       // 1 bis 32 Zeichen
 bool validPassword(const char* s);   // leer (offenes Netz) oder 8 bis 64 Zeichen
+
+// Zugang zum Cerbo GX (MQTT, Profil "Secured": Port 8883, TLS, Passwort)
+const size_t CERBO_HOST_MAX = 39, PORTAL_ID_MAX = 15, MQTT_PASSWORD_MAX = 64;
+bool validCerboHost(const char* s);      // 1-39 Zeichen ohne Leerzeichen, z. B. 192.168.5.20
+bool validPortalId(const char* s);       // 1-15 Buchstaben/Ziffern, z. B. c0619ab68636
+bool validMqttPassword(const char* s);   // 1-64 Zeichen
+
+// Wert aus einer Victron-MQTT-Nachricht {"value": 1}. Liefert false bei leerer
+// Nachricht (Geraet weg) oder {"value": null}.
+bool parseVictronInt(const char* payload, size_t length, long& value);
 
 }  // namespace isme

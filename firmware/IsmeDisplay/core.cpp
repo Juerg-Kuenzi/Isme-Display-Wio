@@ -274,8 +274,9 @@ void ExhaustMonitor::onReading(float c, uint32_t now) {
 
 bool ExhaustMonitor::isFresh(uint32_t now) const { return has_ && now - lastAt_ < STALE_AFTER_MS; }
 
-void ExhaustMonitor::update(uint32_t now, float limit) {
-    bool active = has_ && isFresh(now) && (celsius_ > limit || (alarm_ && celsius_ > limit - 1.0f));
+void ExhaustMonitor::update(uint32_t now, float limit, bool allowed) {
+    bool active = allowed && has_ && isFresh(now) &&
+                  (celsius_ > limit || (alarm_ && celsius_ > limit - 1.0f));
     if (!active) muted_ = false;
     alarm_ = active;
 }
@@ -334,6 +335,44 @@ void formatFactor(char* out, size_t size, long v) {
     while (n > 0 && digits[n - 1] == '0') n--;
     digits[n] = 0;
     snprintf(out, size, "%ld.%s", whole, digits);
+}
+
+// ---------- Motorsignal ----------
+
+void EngineGate::onState(EngineState s, uint32_t now) {
+    if (s == EngineState::Running && state_ == EngineState::Off) {
+        // Start erkannt: Schonfrist ab der aktuellen Temperatur
+        grace_ = true;
+        startAt_ = now;
+        startKnown_ = hasLast_;
+        startCelsius_ = lastCelsius_;
+    }
+    if (s != EngineState::Running) grace_ = false;
+    state_ = s;
+}
+
+void EngineGate::onReading(float celsius) {
+    lastCelsius_ = celsius;
+    hasLast_ = true;
+    if (grace_ && !startKnown_) {
+        startKnown_ = true;
+        startCelsius_ = celsius;
+    }
+}
+
+bool EngineGate::inGrace(uint32_t now) const {
+    return state_ == EngineState::Running && grace_ && now - startAt_ < GRACE_MS;
+}
+
+bool EngineGate::monitorAllowed(float celsius, uint32_t now) const {
+    switch (state_) {
+        case EngineState::Unknown: return true;
+        case EngineState::Off: return false;
+        case EngineState::Running:
+            if (inGrace(now)) return startKnown_ && celsius > startCelsius_ + GRACE_RISE;
+            return true;
+    }
+    return true;
 }
 
 // ---------- Seiten der Hauptanzeige ----------
@@ -434,6 +473,9 @@ ConsoleCommand parseConsoleLine(char* line, const char** arg) {
     if (strcmp(s, "status") == 0) return ConsoleCommand::Status;
     if (strncmp(s, "ssid=", 5) == 0) { *arg = s + 5; return ConsoleCommand::Ssid; }
     if (strncmp(s, "pass=", 5) == 0) { *arg = s + 5; return ConsoleCommand::Password; }
+    if (strncmp(s, "cerbo=", 6) == 0) { *arg = s + 6; return ConsoleCommand::CerboHost; }
+    if (strncmp(s, "portal=", 7) == 0) { *arg = s + 7; return ConsoleCommand::Portal; }
+    if (strncmp(s, "mqttpass=", 9) == 0) { *arg = s + 9; return ConsoleCommand::MqttPassword; }
     return ConsoleCommand::Unknown;
 }
 
@@ -466,6 +508,46 @@ ConsoleLineReader::Event ConsoleLineReader::feed(char c) {
 bool validSsid(const char* s) {
     size_t n = strlen(s);
     return n >= 1 && n <= SSID_MAX;
+}
+
+bool validCerboHost(const char* s) {
+    size_t n = strlen(s);
+    if (n < 1 || n > CERBO_HOST_MAX) return false;
+    for (const char* p = s; *p; p++)
+        if (*p == ' ' || static_cast<unsigned char>(*p) < 0x21) return false;
+    return true;
+}
+
+bool validPortalId(const char* s) {
+    size_t n = strlen(s);
+    if (n < 1 || n > PORTAL_ID_MAX) return false;
+    for (const char* p = s; *p; p++)
+        if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))) return false;
+    return true;
+}
+
+bool validMqttPassword(const char* s) {
+    size_t n = strlen(s);
+    return n >= 1 && n <= MQTT_PASSWORD_MAX;
+}
+
+bool parseVictronInt(const char* payload, size_t length, long& value) {
+    char buf[64];
+    if (length == 0 || length >= sizeof(buf)) return false;
+    memcpy(buf, payload, length);
+    buf[length] = 0;
+    const char* p = strstr(buf, "\"value\"");
+    if (!p) return false;
+    p = strchr(p + 7, ':');
+    if (!p) return false;
+    p++;
+    while (*p == ' ') p++;
+    if (*p == 'n') return false;   // null
+    char* end;
+    double v = strtod(p, &end);
+    if (end == p) return false;
+    value = static_cast<long>(v);
+    return true;
 }
 
 bool validPassword(const char* s) {
