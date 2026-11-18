@@ -1705,4 +1705,3 @@ void appLoop() {
         renderNeeded = false;
     }
 }
-}
