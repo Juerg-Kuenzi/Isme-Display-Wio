@@ -139,7 +139,7 @@ Warum nicht MQTT: Mit den Sicherheitsprofilen *Secured* und *Weak* verlangt der 
 
 Einrichtung:
 
-1. Cerbo: *Einstellungen > Integrationen > Digitale E/A*: den Eingang auf **Bilgepumpe** stellen (der Typ *Generic I/O* steht im Menü nicht zur Wahl), Alarm aus, Name z. B. „Motor“. *ein* muss „Motor läuft“ bedeuten, sonst *Invertieren*. **Nicht „Generator“** wählen: dieser Typ meldet dem Multi/Quattro einen Generator am AC-Eingang und steuert die Generator-Start/Stopp-Logik.
+1. Cerbo: *Einstellungen > Integrationen > Digitale E/A*: den Eingang auf **Bilgepumpe** stellen (der Typ *Generic I/O* steht im Menü nicht zur Wahl), Alarm aus, Name z. B. „Motor“, **Invertieren ein**. Der offene Eingang liegt auf *high* (= *ein*); ein geschlossener Kontakt, z. B. ein Relais an „Zündung ein“, zieht ihn auf *low*. Mit *Invertieren* gilt deshalb: Kontakt offen = Motor aus, Kontakt geschlossen = Motor läuft. So zeigt das Display auch ohne angeschlossenes Relais „Motor aus“. **Nicht „Generator“** wählen: dieser Typ meldet dem Multi/Quattro einen Generator am AC-Eingang und steuert die Generator-Start/Stopp-Logik.
 2. Cerbo: *Einstellungen > Integrationen > Modbus TCP* einschalten. Unter *Verfügbare Dienste* steht der Eingang mit seiner Geräte-ID, z. B. „Motor – com.victronenergy.digitalinput | Geräte-ID: 1“. Kontrolle vom PC: `Test-NetConnection <IP des Cerbo> -Port 502`.
 3. Display, USB-Konsole: `cerbo=<IP des Cerbo>`.
 4. Display: *Einstellungen > Motorsignal* auf die Geräte-ID stellen (oder Konsole `motor=1`). Die Seite zeigt den Zustand der Verbindung, ebenso `status` an der Konsole. `motor=0` schaltet das Motorsignal aus.
@@ -148,7 +148,7 @@ Verstanden werden die Zustände low/high (Generic I/O), aus/ein (Bilgepumpe), ne
 
 Hinweis Sicherheit: Modbus TCP hat kein Passwort. Jedes Gerät im selben Netz kann Werte lesen und einige Einstellungen schreiben (z. B. ESS-Sollwerte). Das Sicherheitsprofil für Weboberfläche und MQTT bleibt davon unberührt.
 
-Ohne Relais testen: Im Cerbo *Invertieren* des Eingangs umschalten – das Display muss zwischen „Motor aus“ und „Motor läuft“ wechseln. Auf der Seite Abgastemperatur steht unten „Motor aus: Abgasalarm ruht“ bzw. kurz nach dem Start „Motor gestartet: Schonfrist“.
+Ohne Relais testen: Im Cerbo *Invertieren* des Eingangs vorübergehend ausschalten – das Display muss zwischen „Motor aus“ und „Motor läuft“ wechseln. Auf der Seite Abgastemperatur steht unten „Motor aus: Abgasalarm ruht“ bzw. kurz nach dem Start „Motor gestartet: Schonfrist“.
 
 Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist unter 1 s. Ist der Cerbo ausgeschaltet oder nicht im Netz, bis etwa 30 s, denn der WLAN-Chip kennt dafür keine Zeitgrenze (ein eigener nicht-blockierender Aufbau führte zu Abstürzen). Deshalb beginnt er erst 20 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Fehlersuche: Konsole `log=ein`.
 
