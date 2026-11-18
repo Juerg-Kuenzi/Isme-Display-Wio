@@ -691,10 +691,12 @@ void alarmLine(char* buf, size_t size) {
     snprintf(buf, size, "Abgas %s °C, über %u °C", t, settings.alarmLimit);
 }
 
-// Grosser Wert rechtsbuendig, mit kleinerer Schrift, falls er nicht passt
-void bigNumber(const char* text, int right, int y, int height, int font, uint16_t color) {
+// Grosser Wert rechtsbuendig, mit kleinerer Schrift, falls er nicht passt.
+// Schrift 7 ist 7-Segment und bleibt der Uhrzeit vorbehalten; Messwerte
+// verwenden Schrift 8 (75 Pixel) und als Rueckfall Schrift 6 (48 Pixel).
+void bigNumber(const char* text, int right, int y, int height, int font, uint16_t color, int fallbackFont = 7) {
     int f = font;
-    if (tft.textWidth(text, f) > right - 4) f = 7;
+    if (tft.textWidth(text, f) > right - 4) f = fallbackFont;
     int dy = (f == 8) ? 0 : height - 48;
     tft.fillRect(0, y, right + 2, height + 2, pal.bg);
     tft.setTextDatum(TR_DATUM);
@@ -767,11 +769,13 @@ void renderChainPage(uint32_t now) {
 }
 
 void renderN2kPage(uint32_t now) {
+    // Ab 1.9.0 ohne Uhrzeit (eigene Seite) und mit grosser Temperatur in der
+    // Schrift der Kettenlaenge, damit sie nicht mit der 7-Segment-Uhr verwechselt wird.
+    const int VALUE_Y = 84, VALUE_H = 75;
     if (fullRedraw) {
         titleBar("NMEA2000", true);
         drawText("Abgastemperatur", 8, 38, 2, pal.muted, pal.bg, ALIGN_LEFT);
-        drawText("°C", 268, 56 + 48 - 26, 4, pal.ink, pal.bg, ALIGN_LEFT);
-        tft.drawFastHLine(0, 110, 320, pal.rule);
+        drawText("°C", 268, VALUE_Y + VALUE_H - 26, 4, pal.ink, pal.bg, ALIGN_LEFT);
         tft.drawFastHLine(0, 188, 320, pal.rule);
     }
     bool fresh = exhaust.isFresh(now);
@@ -779,7 +783,7 @@ void renderN2kPage(uint32_t now) {
     if (exhaust.hasValue()) formatOneDecimal(s, sizeof(s), exhaust.celsius());
     else snprintf(s, sizeof(s), "-");
     snprintf(sig, sizeof(sig), "%s|%d", s, fresh);
-    if (changed(R_EXHAUST, sig)) bigNumber(s, 262, 56, 48, 7, fresh ? pal.ink : pal.muted);
+    if (changed(R_EXHAUST, sig)) bigNumber(s, 262, VALUE_Y, VALUE_H, 8, fresh ? pal.ink : pal.muted, 6);
 
     snprintf(s, sizeof(s), "Alarm ab %u °C", settings.alarmLimit);
     if (changed(R_LIMIT, s)) {
@@ -787,36 +791,16 @@ void renderN2kPage(uint32_t now) {
         drawText(s, 312, 38, 2, pal.muted, pal.bg, ALIGN_RIGHT);
     }
 
-    // Ortszeit aus der UTC-Zeit vom GPS, gleich gross wie die Temperatur
-    char tz[12];
-    formatUtcOffset(tz, sizeof(tz), settings.utcOffset);
-    snprintf(s, sizeof(s), "Ortszeit %s", tz);
-    if (changed(R_CLOCK_LABEL, s)) {
-        tft.fillRect(0, 114, 320, 18, pal.bg);
-        drawText(s, 8, 116, 2, pal.muted, pal.bg, ALIGN_LEFT);
-    }
-    bool clockFresh = busClock.isFresh(now);
-    if (busClock.hasTime()) formatClock(s, sizeof(s), busClock.utcMillis(now), settings.utcOffset);
-    else snprintf(s, sizeof(s), "--:--");
-    snprintf(sig, sizeof(sig), "%s|%d", s, clockFresh);
-    if (changed(R_CLOCK, sig)) bigNumber(s, 262, 134, 48, 7, clockFresh ? pal.ink : pal.muted);
-
-    // Unten: Alarm hat Vorrang, sonst bis zu zwei Warnungen
+    // Unten: Alarm hat Vorrang, sonst die Warnung zur Abgastemperatur
     char l1[72] = "", l2[72] = "", w[72];
     bool warning = false;
     if (exhaust.alarmActive()) {
         alarmLine(l1, sizeof(l1));
         if (!exhaust.muted()) snprintf(l2, sizeof(l2), "Taste Mitte: Ton aus");
         warning = true;
-    } else {
-        if (n2kWarning(now, w, sizeof(w))) {
-            snprintf(l1, sizeof(l1), "%s", w);
-            warning = true;
-        }
-        if (clockWarning(now, w, sizeof(w))) {
-            snprintf(l1[0] ? l2 : l1, sizeof(l1), "%s", w);
-            warning = true;
-        }
+    } else if (n2kWarning(now, w, sizeof(w))) {
+        snprintf(l1, sizeof(l1), "%s", w);
+        warning = true;
     }
     snprintf(sig, sizeof(sig), "%s|%s|%d", l1, l2, warning);
     if (changed(R_BOTTOM, sig)) {
