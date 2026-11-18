@@ -1453,7 +1453,7 @@ bool renderNeeded = true;
 // ---------------------------------------------------------------------------
 void consolePrint(const char* text) { Serial.println(text); }
 
-// Protokoll (log=1): nur im RAM, nach einem Neustart wieder aus. Jede Zeile wird
+// Protokoll (log=ein): nur im RAM, nach einem Neustart wieder aus. Jede Zeile wird
 // sofort gesendet, damit bei einem Haenger die letzte Zeile zeigt, wo es steht.
 bool logOn = false;
 void logLine(const char* text) {
@@ -1545,7 +1545,7 @@ void handleConsoleLine(char* text) {
             consolePrint("  cerbo=<ip>   Adresse des Cerbo GX (MQTT, Port 8883, TLS)");
             consolePrint("  portal=<id>  VRM Portal ID des Cerbo");
             consolePrint("  mqttpass=<pw> MQTT-Passwort des Cerbo (Profil Secured/Weak)");
-            consolePrint("  log=1 / log=0 Protokoll an der Konsole ein/aus (Fehlersuche, nach Neustart aus)");
+            consolePrint("  log=ein / log=aus Protokoll an der Konsole ein/aus (Fehlersuche, nach Neustart aus)");
             consolePrint("  motor=<n>    Motorsignal: 0 = aus, 1-4 = Digitaleingang des Cerbo");
             break;
         case ConsoleCommand::Status:

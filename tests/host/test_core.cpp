@@ -220,6 +220,8 @@ static void testConsole() {
     CHECK(!validMqttPassword(""));
     char l1[] = "log=1"; CHECK(parseConsoleLine(l1, &arg) == ConsoleCommand::Log && !strcmp(arg, "1"));
     char l0[] = " log=0\r"; CHECK(parseConsoleLine(l0, &arg) == ConsoleCommand::Log && !strcmp(arg, "0"));
+    char le[] = "log=ein"; CHECK(parseConsoleLine(le, &arg) == ConsoleCommand::Log && !strcmp(arg, "1"));
+    char la[] = "log=aus"; CHECK(parseConsoleLine(la, &arg) == ConsoleCommand::Log && !strcmp(arg, "0"));
     char l2[] = "log=2"; CHECK(parseConsoleLine(l2, &arg) == ConsoleCommand::Unknown);
     char m1[] = "motor=0"; CHECK(parseConsoleLine(m1, &arg) == ConsoleCommand::EngineInput);
     uint8_t in = 9;

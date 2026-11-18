@@ -476,8 +476,8 @@ ConsoleCommand parseConsoleLine(char* line, const char** arg) {
     if (strncmp(s, "cerbo=", 6) == 0) { *arg = s + 6; return ConsoleCommand::CerboHost; }
     if (strncmp(s, "portal=", 7) == 0) { *arg = s + 7; return ConsoleCommand::Portal; }
     if (strncmp(s, "mqttpass=", 9) == 0) { *arg = s + 9; return ConsoleCommand::MqttPassword; }
-    if (strcmp(s, "log=1") == 0) { *arg = "1"; return ConsoleCommand::Log; }
-    if (strcmp(s, "log=0") == 0) { *arg = "0"; return ConsoleCommand::Log; }
+    if (!strcmp(s, "log=ein") || !strcmp(s, "log=1")) { *arg = "1"; return ConsoleCommand::Log; }
+    if (!strcmp(s, "log=aus") || !strcmp(s, "log=0")) { *arg = "0"; return ConsoleCommand::Log; }
     if (strncmp(s, "motor=", 6) == 0) { *arg = s + 6; return ConsoleCommand::EngineInput; }
     return ConsoleCommand::Unknown;
 }
