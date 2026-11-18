@@ -6,6 +6,7 @@
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
 #include <rpcWiFi.h>
+#include "lwip/sockets.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -114,6 +115,56 @@ void publishKeepalive(bool full, const char* portal) {
     mqtt.publish(topic, full ? "" : "{\"keepalive-options\":[\"suppress-republish\"]}");
 }
 
+// TCP-Test mit sicherer Zeitgrenze. WiFiClient::connect(ip, port, timeout) blieb
+// an Bord haengen: Vermutlich kommt O_NONBLOCK aus der newlib (0x4000) statt aus
+// lwip (1), die Verbindung wartet dann blockierend. Hier deshalb die lwip-Werte
+// direkt, Kontrolle mit F_GETFL, und statt select() ein wiederholtes connect():
+// "laeuft noch" (EALREADY/EINPROGRESS) oder "verbunden" (EISCONN).
+// Ergebnis: 1 erreichbar, 0 nicht erreichbar, -1 Test nicht moeglich.
+const int LWIP_F_GETFL = 3, LWIP_F_SETFL = 4, LWIP_O_NONBLOCK = 1;
+// errno-Werte je nach Bibliothek des WLAN-Chips (lwip / newlib)
+bool errIs(int e, int lwipValue, int newlibValue) { return e == lwipValue || e == newlibValue; }
+
+int probeTcp(IPAddress ip, uint16_t port, uint32_t timeoutMs) {
+    int s = lwip_socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        trace("socket() FEHLER %d", s);
+        return -1;
+    }
+    lwip_fcntl(s, LWIP_F_SETFL, LWIP_O_NONBLOCK);
+    int flags = lwip_fcntl(s, LWIP_F_GETFL, 0);
+    trace("socket %d, Flags %d", s, flags);
+    if (flags < 0 || !(flags & LWIP_O_NONBLOCK)) {
+        trace("nicht-blockierend nicht moeglich, kein Test");
+        lwip_close(s);
+        return -1;
+    }
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = static_cast<uint32_t>(ip);
+    uint32_t start = millis();
+    int result = 0, polls = 0;
+    for (;;) {
+        int r = lwip_connect(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        int e = r < 0 ? lwip_errno() : 0;
+        if (polls++ == 0) trace("connect: %d, errno %d", r, e);
+        if (r == 0 || errIs(e, 106, 127)) { result = 1; break; }                 // EISCONN
+        if (!(errIs(e, 114, 120) || errIs(e, 115, 119) || e == 11)) {          // EALREADY, EINPROGRESS, EAGAIN
+            trace("connect: errno %d nach %lu ms", e, millis() - start);
+            break;
+        }
+        if (millis() - start >= timeoutMs) {
+            trace("Zeitgrenze, %d Abfragen", polls);
+            break;
+        }
+        delay(50);
+    }
+    lwip_close(s);
+    return result;
+}
+
 bool resolve(const char* host, IPAddress& ip) {
     if (ip.fromString(host)) return true;
     return WiFi.hostByName(host, ip) == 1;
@@ -134,18 +185,19 @@ void connectNow(const Config& c, uint32_t now) {
     }
     // 1. Ist der Cerbo ueberhaupt erreichbar? (mit Zeitgrenze)
     {
-        WiFiClient probe;
         t = millis();
         trace("TCP-Test Port %u ...", MQTT_TLS_PORT);
-        bool ok = probe.connect(ip, MQTT_TLS_PORT, TCP_PROBE_MS);
-        trace("-> %s (%lu ms)", ok ? "ok" : "FEHLER, nicht erreichbar", millis() - t);
-        if (!ok) {
+        int ok = probeTcp(ip, MQTT_TLS_PORT, TCP_PROBE_MS);
+        trace("-> %s (%lu ms)", ok > 0 ? "ok" : ok == 0 ? "FEHLER, nicht erreichbar" : "FEHLER, Test nicht moeglich",
+              millis() - t);
+        if (ok == 0) {
             snprintf(lastText, sizeof(lastText), "Cerbo nicht erreichbar (Port 8883), neuer Versuch in %lu s", wait);
             return;
         }
-        t = millis();
-        probe.stop();
-        trace("TCP-Test beendet (%lu ms)", millis() - t);
+        if (ok < 0) {
+            snprintf(lastText, sizeof(lastText), "TCP-Test nicht moeglich (log=ein), neuer Versuch in %lu s", wait);
+            return;
+        }
     }
     // 2. TLS ohne Zertifikatspruefung, Handshake mit Zeitgrenze
     t = millis();
