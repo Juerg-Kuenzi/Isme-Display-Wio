@@ -339,7 +339,20 @@ void formatFactor(char* out, size_t size, long v) {
 
 // ---------- Motorsignal ----------
 
+void EngineGate::setEnabled(bool enabled, uint32_t now) {
+    if (enabled && !enabled_) {
+        enabledAt_ = now;
+        everKnown_ = false;
+    }
+    enabled_ = enabled;
+}
+
+bool EngineGate::inStartupHold(uint32_t now) const {
+    return enabled_ && !everKnown_ && state_ == EngineState::Unknown && now - enabledAt_ < STARTUP_HOLD_MS;
+}
+
 void EngineGate::onState(EngineState s, uint32_t now) {
+    if (s != EngineState::Unknown) everKnown_ = true;
     if (s == EngineState::Running && state_ == EngineState::Off) {
         // Start erkannt: Schonfrist ab der aktuellen Temperatur
         grace_ = true;
@@ -366,7 +379,7 @@ bool EngineGate::inGrace(uint32_t now) const {
 
 bool EngineGate::monitorAllowed(float celsius, uint32_t now) const {
     switch (state_) {
-        case EngineState::Unknown: return true;
+        case EngineState::Unknown: return !inStartupHold(now);
         case EngineState::Off: return false;
         case EngineState::Running:
             if (inGrace(now)) return startKnown_ && celsius > startCelsius_ + GRACE_RISE;

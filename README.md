@@ -148,9 +148,11 @@ Verstanden werden die Zustände low/high (Generic I/O), aus/ein (Bilgepumpe), ne
 
 Hinweis Sicherheit: Modbus TCP hat kein Passwort. Jedes Gerät im selben Netz kann Werte lesen und einige Einstellungen schreiben (z. B. ESS-Sollwerte). Das Sicherheitsprofil für Weboberfläche und MQTT bleibt davon unberührt.
 
+Beim Start des Displays (und wenn das Motorsignal neu eingeschaltet wird) ruht der Abgasalarm, bis die erste Meldung vom Cerbo kommt, höchstens 1 min. Sonst würde ein vom Nachheizen noch heisser Auspuff bei stehendem Motor gleich nach dem Einschalten Alarm auslösen. Unten auf der Seite steht dann „Warte auf Motorsignal vom Cerbo“. Kommt in dieser Minute nichts, überwacht das Display wie ohne Motorsignal.
+
 Ohne Relais testen: Im Cerbo *Invertieren* des Eingangs vorübergehend ausschalten – das Display muss zwischen „Motor aus“ und „Motor läuft“ wechseln. Auf der Seite Abgastemperatur steht unten „Motor aus: Abgasalarm ruht“ bzw. kurz nach dem Start „Motor gestartet: Schonfrist“.
 
-Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist unter 1 s. Ist der Cerbo ausgeschaltet oder nicht im Netz, bis etwa 30 s, denn der WLAN-Chip kennt dafür keine Zeitgrenze (ein eigener nicht-blockierender Aufbau führte zu Abstürzen). Deshalb beginnt er erst 20 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Fehlersuche: Konsole `log=ein`.
+Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist unter 1 s. Ist der Cerbo ausgeschaltet oder nicht im Netz, bis etwa 30 s, denn der WLAN-Chip kennt dafür keine Zeitgrenze (ein eigener nicht-blockierender Aufbau führte zu Abstürzen). Deshalb beginnt er erst 3 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Fehlersuche: Konsole `log=ein`.
 
 ## Raymarine-Helligkeit (PGN 126720)
 
