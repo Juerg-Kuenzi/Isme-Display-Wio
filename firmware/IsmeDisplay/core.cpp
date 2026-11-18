@@ -478,6 +478,10 @@ ConsoleCommand parseConsoleLine(char* line, const char** arg) {
     if (strncmp(s, "mqttpass=", 9) == 0) { *arg = s + 9; return ConsoleCommand::MqttPassword; }
     if (!strcmp(s, "log=ein") || !strcmp(s, "log=1")) { *arg = "1"; return ConsoleCommand::Log; }
     if (!strcmp(s, "log=aus") || !strcmp(s, "log=0")) { *arg = "0"; return ConsoleCommand::Log; }
+    if (strncmp(s, "tcptest=", 8) == 0) { *arg = s + 8; return ConsoleCommand::TcpTest; }
+    if (strncmp(s, "tcptest2=", 9) == 0) { *arg = s + 9; return ConsoleCommand::TcpTestClassic; }
+    if (!strcmp(s, "udp=ein")) { *arg = "1"; return ConsoleCommand::Udp; }
+    if (!strcmp(s, "udp=aus")) { *arg = "0"; return ConsoleCommand::Udp; }
     if (strncmp(s, "motor=", 6) == 0) { *arg = s + 6; return ConsoleCommand::EngineInput; }
     return ConsoleCommand::Unknown;
 }
@@ -537,6 +541,30 @@ bool validMqttPassword(const char* s) {
 bool parseEngineInput(const char* s, uint8_t& input) {
     if (s[0] < '0' || s[0] > '4' || s[1] != 0) return false;
     input = static_cast<uint8_t>(s[0] - '0');
+    return true;
+}
+
+bool parseHostPort(const char* s, char* host, size_t hostSize, uint16_t& port, uint16_t defaultPort) {
+    const char* colon = strchr(s, ':');
+    size_t n = colon ? static_cast<size_t>(colon - s) : strlen(s);
+    if (n < 1 || n >= hostSize) return false;
+    for (size_t i = 0; i < n; i++)
+        if (static_cast<unsigned char>(s[i]) < 0x21) return false;
+    unsigned long p = defaultPort;
+    if (colon) {
+        const char* d = colon + 1;
+        if (!*d) return false;
+        p = 0;
+        for (; *d; d++) {
+            if (*d < '0' || *d > '9') return false;
+            p = p * 10 + static_cast<unsigned long>(*d - '0');
+            if (p > 65535) return false;
+        }
+        if (p == 0) return false;
+    }
+    memcpy(host, s, n);
+    host[n] = 0;
+    port = static_cast<uint16_t>(p);
     return true;
 }
 

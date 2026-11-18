@@ -440,6 +440,7 @@ bool bridgeKnown = false;
 
 bool wifiConnected = false;
 bool udpOpen = false;
+bool udpBlocked = false;   // Konsole udp=aus (Fehlersuche)
 uint32_t wifiStartedAt = 0;
 
 char messages[ITEM_COUNT][72];
@@ -525,7 +526,7 @@ void serviceWifi(uint32_t now) {
             consoleWifiReport = false;
         }
     }
-    if (connected && !udpOpen) openUdp();
+    if (connected && !udpOpen && !udpBlocked) openUdp();
     if (!connected) {
         if (udpOpen) {
             chainUdp.stop();
@@ -1545,7 +1546,8 @@ void consoleStatus() {
 void handleConsoleLine(char* text) {
     const char* arg;
     char line[120];
-    switch (parseConsoleLine(text, &arg)) {
+    ConsoleCommand cmd = parseConsoleLine(text, &arg);
+    switch (cmd) {
         case ConsoleCommand::Empty:
             break;
         case ConsoleCommand::Help:
@@ -1558,6 +1560,8 @@ void handleConsoleLine(char* text) {
             consolePrint("  portal=<id>  VRM Portal ID des Cerbo");
             consolePrint("  mqttpass=<pw> MQTT-Passwort des Cerbo (Profil Secured/Weak)");
             consolePrint("  log=ein / log=aus Protokoll an der Konsole ein/aus (Fehlersuche, nach Neustart aus)");
+            consolePrint("Fehlersuche: tcptest=<ip>[:port] (eigener Test), tcptest2=<ip>[:port] (WiFiClient),");
+            consolePrint("  udp=aus / udp=ein (UDP-Empfang anhalten)");
             consolePrint("  motor=<n>    Motorsignal: 0 = aus, 1-4 = Digitaleingang des Cerbo");
             break;
         case ConsoleCommand::Status:
@@ -1617,6 +1621,26 @@ void handleConsoleLine(char* text) {
             consolePrint(line);
             break;
         }
+        case ConsoleCommand::TcpTest:
+        case ConsoleCommand::TcpTestClassic: {
+            char host[40];
+            uint16_t port;
+            if (!parseHostPort(arg, host, sizeof(host), port, 8883)) {
+                consolePrint("FEHLER: tcptest=<ip>[:port], z. B. tcptest=192.168.5.12:80");
+                break;
+            }
+            cerbo::testTcp(host, port, cmd == ConsoleCommand::TcpTestClassic, logLine);
+            break;
+        }
+        case ConsoleCommand::Udp:
+            udpBlocked = arg[0] == '0';
+            if (udpBlocked && udpOpen) {
+                chainUdp.stop();
+                n2kUdp.stop();
+                udpOpen = false;
+            }
+            consolePrint(udpBlocked ? "OK: UDP-Empfang aus (bis udp=ein oder Neustart)." : "OK: UDP-Empfang ein.");
+            break;
         case ConsoleCommand::Log:
             logOn = arg[0] == '1';
             cerbo::setLogger(logOn ? logLine : nullptr);

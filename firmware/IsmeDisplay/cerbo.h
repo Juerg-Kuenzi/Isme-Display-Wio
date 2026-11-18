@@ -42,6 +42,10 @@ isme::EngineState engineState();
 // Protokoll an die Konsole (nullptr = aus)
 void setLogger(void (*fn)(const char*));
 
+// Fehlersuche: TCP-Verbindung zu host:port testen, jeder Schritt an out.
+// classic = WiFiClient.connect ohne Zeitgrenze, sonst der eigene Test (1,5 s).
+void testTcp(const char* host, uint16_t port, bool classic, void (*out)(const char*));
+
 // Zustand in Worten, z. B. "verbunden, Motor laeuft"
 void status(char* out, size_t size);
 

@@ -131,6 +131,7 @@ int probeTcp(IPAddress ip, uint16_t port, uint32_t timeoutMs) {
         trace("socket() FEHLER %d", s);
         return -1;
     }
+    trace("socket %d, setze nicht-blockierend ...", s);
     lwip_fcntl(s, LWIP_F_SETFL, LWIP_O_NONBLOCK);
     int flags = lwip_fcntl(s, LWIP_F_GETFL, 0);
     trace("socket %d, Flags %d", s, flags);
@@ -147,7 +148,9 @@ int probeTcp(IPAddress ip, uint16_t port, uint32_t timeoutMs) {
     uint32_t start = millis();
     int result = 0, polls = 0;
     for (;;) {
+        if (polls == 0) trace("connect() senden ...");
         int r = lwip_connect(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        if (polls == 0) trace("connect() zurueck: %d, errno abfragen ...", r);
         int e = r < 0 ? lwip_errno() : 0;
         if (polls++ == 0) trace("connect: %d, errno %d", r, e);
         if (r == 0 || errIs(e, 106, 127)) { result = 1; break; }                 // EISCONN
@@ -161,7 +164,9 @@ int probeTcp(IPAddress ip, uint16_t port, uint32_t timeoutMs) {
         }
         delay(50);
     }
+    trace("close() ...");
     lwip_close(s);
+    trace("-> geschlossen");
     return result;
 }
 
@@ -336,6 +341,29 @@ void service(const Config& c, bool wifiUp, bool allowConnect, uint32_t now) {
 isme::EngineState engineState() { return engine; }
 
 void setLogger(void (*fn)(const char*)) { logger = fn; }
+
+void testTcp(const char* host, uint16_t port, bool classic, void (*out)(const char*)) {
+    void (*saved)(const char*) = logger;
+    logger = out;
+    IPAddress ip;
+    if (!resolve(host, ip)) {
+        trace("Test: Adresse %s unbekannt", host);
+    } else if (!classic) {
+        trace("Test: nicht-blockierend zu %s:%u ...", host, port);
+        uint32_t t = millis();
+        int r = probeTcp(ip, port, TCP_PROBE_MS);
+        trace("Test: Ergebnis %d (1 = erreichbar) nach %lu ms", r, millis() - t);
+    } else {
+        trace("Test: WiFiClient.connect zu %s:%u (ohne Zeitgrenze) ...", host, port);
+        uint32_t t = millis();
+        WiFiClient client;
+        int r = client.connect(ip, port);
+        trace("Test: connect %d nach %lu ms, trenne ...", r, millis() - t);
+        client.stop();
+        trace("Test: getrennt");
+    }
+    logger = saved;
+}
 
 void status(char* out, size_t size) { snprintf(out, size, "%s", lastText); }
 

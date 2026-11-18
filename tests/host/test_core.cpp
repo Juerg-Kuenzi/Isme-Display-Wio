@@ -223,6 +223,15 @@ static void testConsole() {
     char le[] = "log=ein"; CHECK(parseConsoleLine(le, &arg) == ConsoleCommand::Log && !strcmp(arg, "1"));
     char la[] = "log=aus"; CHECK(parseConsoleLine(la, &arg) == ConsoleCommand::Log && !strcmp(arg, "0"));
     char l2[] = "log=2"; CHECK(parseConsoleLine(l2, &arg) == ConsoleCommand::Unknown);
+    char t1[] = "tcptest=192.168.5.12:80"; CHECK(parseConsoleLine(t1, &arg) == ConsoleCommand::TcpTest);
+    char hb[40]; uint16_t hp = 0;
+    CHECK(parseHostPort(arg, hb, sizeof(hb), hp, 8883) && !strcmp(hb, "192.168.5.12") && hp == 80);
+    CHECK(parseHostPort("192.168.5.12", hb, sizeof(hb), hp, 8883) && hp == 8883);
+    CHECK(!parseHostPort("192.168.5.12:", hb, sizeof(hb), hp, 8883) && !parseHostPort(":80", hb, sizeof(hb), hp, 8883));
+    CHECK(!parseHostPort("a:70000", hb, sizeof(hb), hp, 1) && !parseHostPort("a:8x", hb, sizeof(hb), hp, 1));
+    CHECK(!parseHostPort("a:0", hb, sizeof(hb), hp, 1) && !parseHostPort("abcdef", hb, 4, hp, 1));
+    char t2[] = "tcptest2=x"; CHECK(parseConsoleLine(t2, &arg) == ConsoleCommand::TcpTestClassic);
+    char u0[] = "udp=aus"; CHECK(parseConsoleLine(u0, &arg) == ConsoleCommand::Udp && !strcmp(arg, "0"));
     char m1[] = "motor=0"; CHECK(parseConsoleLine(m1, &arg) == ConsoleCommand::EngineInput);
     uint8_t in = 9;
     CHECK(parseEngineInput(arg, in) && in == 0);
