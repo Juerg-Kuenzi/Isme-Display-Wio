@@ -144,7 +144,7 @@ Einrichtung:
 
 Ohne Relais testen: Im Cerbo *Invert* des Eingangs umschalten – das Display muss zwischen „Motor aus“ und „Motor läuft“ wechseln. Auf der Seite Abgastemperatur steht unten „Motor aus: Abgasalarm ruht“ bzw. kurz nach dem Start „Motor gestartet: Schonfrist“.
 
-Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist 1–3 s, höchstens etwa 12 s. Deshalb beginnt er erst 20 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Zuerst prüft das Display mit kurzer Zeitgrenze (1,5 s), ob Port 8883 erreichbar ist; TLS und MQTT haben eigene Zeitgrenzen. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Die Statuszeile nennt die Stufe, an der es scheitert: *Cerbo nicht erreichbar*, *TLS-Verbindung fehlgeschlagen*, *MQTT-Passwort falsch*.
+Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist unter 2 s. Ist der Cerbo ausgeschaltet oder nicht im Netz, bis etwa 30 s, denn der WLAN-Chip kennt für den TCP-Verbindungsaufbau keine Zeitgrenze. Deshalb beginnt er erst 20 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Die Statuszeile nennt die Stufe, an der es scheitert: *TLS-Verbindung fehlgeschlagen* (auch: Cerbo nicht erreichbar), *MQTT-Passwort falsch*. Fehlersuche: Konsole `log=ein`.
 
 ## Raymarine-Helligkeit (PGN 126720)
 

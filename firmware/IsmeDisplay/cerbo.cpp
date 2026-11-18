@@ -15,10 +15,8 @@
 // Hauptschleife (Tasten, Anzeige, Konsole), bis sie zurueckkommen. Deshalb:
 //  - Verbindungsaufbau erst, wenn das WLAN eine Weile steht, die Hauptseite
 //    angezeigt wird und keine Taste gedrueckt wurde (allowConnect).
-//  - Zuerst eine gewoehnliche TCP-Verbindung mit kurzer Zeitgrenze. Der TLS-
-//    Client des WLAN-Chips wartet beim Verbindungsaufbau sonst ohne Zeitgrenze
-//    und beim Handshake bis zu 120 s.
-//  - TLS und MQTT mit kurzen Zeitgrenzen, zusammen hoechstens etwa 12 s.
+//  - TLS-Handshake 6 s statt 120 s, MQTT 4 s. Der TCP-Verbindungsaufbau im
+//    WLAN-Chip hat keine Zeitgrenze: Ist der Cerbo aus, bis etwa 30 s.
 //  - Trennen nur, wenn wirklich eine Verbindung bestand.
 //  - Bei Fehlern wachsender Abstand bis zum naechsten Versuch (30 s bis 5 min).
 
@@ -188,23 +186,12 @@ void connectNow(const Config& c, uint32_t now) {
         snprintf(lastText, sizeof(lastText), "Adresse %.24s unbekannt, neuer Versuch in %lu s", c.host, wait);
         return;
     }
-    // 1. Ist der Cerbo ueberhaupt erreichbar? (mit Zeitgrenze)
-    {
-        t = millis();
-        trace("TCP-Test Port %u ...", MQTT_TLS_PORT);
-        int ok = probeTcp(ip, MQTT_TLS_PORT, TCP_PROBE_MS);
-        trace("-> %s (%lu ms)", ok > 0 ? "ok" : ok == 0 ? "FEHLER, nicht erreichbar" : "FEHLER, Test nicht moeglich",
-              millis() - t);
-        if (ok == 0) {
-            snprintf(lastText, sizeof(lastText), "Cerbo nicht erreichbar (Port 8883), neuer Versuch in %lu s", wait);
-            return;
-        }
-        if (ok < 0) {
-            snprintf(lastText, sizeof(lastText), "TCP-Test nicht moeglich (log=ein), neuer Versuch in %lu s", wait);
-            return;
-        }
-    }
-    // 2. TLS ohne Zertifikatspruefung, Handshake mit Zeitgrenze
+    // Kein eigener TCP-Test mehr: der nicht-blockierende Test fuehrte an Bord kurz
+    // danach zu einem Absturz (Konsole: Nullzeichen), WiFiClient.connect ohne
+    // Zeitgrenze und TLS laufen dagegen. Ist der Cerbo aus, wartet der
+    // Verbindungsaufbau dafuer bis etwa 30 s (nur auf der Hauptseite, ohne
+    // Bedienung, mit wachsendem Abstand bis 5 min).
+    // 1. TCP und TLS ohne Zertifikatspruefung, Handshake mit Zeitgrenze
     t = millis();
     trace("TLS-Handshake ...");
     bool tlsOk = tls.connect(ip, MQTT_TLS_PORT, TLS_TIMEOUT_MS);
@@ -219,7 +206,7 @@ void connectNow(const Config& c, uint32_t now) {
         return;
     }
     linkOpen = true;
-    // 3. MQTT-Anmeldung. PubSubClient nimmt die bestehende TLS-Verbindung.
+    // 2. MQTT-Anmeldung. PubSubClient nimmt die bestehende TLS-Verbindung.
     snprintf(stateTopic, sizeof(stateTopic), "N/%s/digitalinput/%u/State", c.portal, c.input);
     mqtt.setServer(ip, MQTT_TLS_PORT);
     mqtt.setCallback(onMessage);
