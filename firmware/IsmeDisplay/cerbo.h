@@ -24,7 +24,7 @@ struct Config {
 };
 
 // In jeder Schleife aufrufen. Der Verbindungsaufbau haelt die Schleife an (meist
-// unter 1 s, ist der Cerbo aus bis ~30 s). Er beginnt fruehestens 20 s nach der
+// unter 1 s, ist der Cerbo aus bis ~30 s). Er beginnt fruehestens 3 s nach der
 // WLAN-Verbindung oder einer Aenderung, nur wenn allowConnect gesetzt ist
 // (Hauptseite, keine Bedienung), nach Fehlern erst wieder nach 30 s bis 5 min.
 void service(const Config& c, bool wifiUp, bool allowConnect, uint32_t now);

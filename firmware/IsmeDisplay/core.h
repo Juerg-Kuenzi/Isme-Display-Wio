@@ -178,6 +178,12 @@ class EngineGate {
 public:
     static const uint32_t GRACE_MS = 10UL * 60 * 1000;
     static constexpr float GRACE_RISE = 2.0f;
+    // Nach dem Einschalten (Start des Displays oder Motorsignal neu gewaehlt):
+    // bis eine erste Meldung kommt, hoechstens so lange kein Abgasalarm. Sonst
+    // loest ein noch heisser Auspuff bei stehendem Motor beim Start Alarm aus.
+    static const uint32_t STARTUP_HOLD_MS = 60000;
+    void setEnabled(bool enabled, uint32_t now);   // in jeder Schleife
+    bool inStartupHold(uint32_t now) const;
     void onState(EngineState s, uint32_t now);
     void onReading(float celsius);            // jede Abgastemperatur
     EngineState state() const { return state_; }
@@ -190,6 +196,8 @@ private:
     uint32_t startAt_ = 0;
     float startCelsius_ = 0, lastCelsius_ = 0;
     bool hasLast_ = false;
+    bool enabled_ = false, everKnown_ = false;
+    uint32_t enabledAt_ = 0;
 };
 
 // ---------- Seiten der Hauptanzeige ----------
