@@ -2,17 +2,14 @@
 // Copyright (C) 2026 Juerg Kuenzi
 #pragma once
 
-// Motorsignal vom Cerbo GX ueber MQTT (Venus OS, dbus-flashmq).
+// Motorsignal vom Cerbo GX ueber Modbus TCP (Port 502, unverschluesselt, ohne
+// Passwort; im Cerbo unter Einstellungen > Integrationen > Modbus TCP).
 //
-// Profil "Secured": Port 8883, TLS ohne Zertifikatspruefung (der Cerbo hat ein
-// selbst signiertes Zertifikat), beliebiger Benutzername, Passwort aus den
-// Einstellungen des Cerbo. Gelesen wird
-//   N/<Portal-ID>/digitalinput/<Eingang>/State
-// eines Digitaleingangs vom Typ "Generic I/O": 1 = high = Motor laeuft,
-// 0 = low = Motor aus. Ob ein geschlossener Kontakt high oder low ist, stellt man
-// im Cerbo mit "Invert" ein. Jede andere Meldung, keine Verbindung oder keine
-// Meldung ergibt EngineState::Unknown; die Abgasueberwachung laeuft dann wie
-// ohne Motorsignal.
+// Gelesen wird Register 3422 (/State) des Digitaleingangs mit der Geraete-ID
+// (Modbus Unit-ID) aus "Verfuegbare Dienste". Typ des Eingangs z. B.
+// "Bilgepumpe": ein = Motor laeuft, aus = Motor aus; vertauscht mit
+// "Invertieren". Keine Verbindung, keine Antwort oder ein unpassender Typ ergibt
+// EngineState::Unknown; die Abgasueberwachung laeuft dann wie ohne Motorsignal.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -22,16 +19,14 @@
 namespace cerbo {
 
 struct Config {
-    uint8_t input;          // 0 = aus, 1-4 = Digitaleingang
+    uint8_t unit;           // 0 = aus, sonst Geraete-ID (Modbus Unit-ID) des Digitaleingangs
     const char* host;       // IP-Adresse oder Name des Cerbo
-    const char* portal;     // VRM Portal ID
-    const char* password;   // MQTT-Passwort ("Secured"/"Weak")
 };
 
-// In jeder Schleife aufrufen. Der Verbindungsaufbau blockiert die Schleife einige
-// Sekunden (hoechstens etwa 12 s). Er beginnt fruehestens 20 s nach der WLAN-
-// Verbindung oder einer Aenderung, nur wenn allowConnect gesetzt ist (Hauptseite,
-// keine Bedienung), und nach Fehlern erst wieder nach 30 s bis 5 min.
+// In jeder Schleife aufrufen. Der Verbindungsaufbau haelt die Schleife an (meist
+// unter 1 s, ist der Cerbo aus bis ~30 s). Er beginnt fruehestens 20 s nach der
+// WLAN-Verbindung oder einer Aenderung, nur wenn allowConnect gesetzt ist
+// (Hauptseite, keine Bedienung), nach Fehlern erst wieder nach 30 s bis 5 min.
 void service(const Config& c, bool wifiUp, bool allowConnect, uint32_t now);
 
 // Nach einer Aenderung der Einstellungen: Verbindung trennen, neu aufbauen
@@ -39,14 +34,13 @@ void reset();
 
 isme::EngineState engineState();
 
+// Zustand in Worten, z. B. "verbunden, Motor laeuft"
+void status(char* out, size_t size);
+
 // Protokoll an die Konsole (nullptr = aus)
 void setLogger(void (*fn)(const char*));
 
-// Fehlersuche: TCP-Verbindung zu host:port testen, jeder Schritt an out.
-// classic = WiFiClient.connect ohne Zeitgrenze, sonst der eigene Test (1,5 s).
-void testTcp(const char* host, uint16_t port, bool classic, void (*out)(const char*));
-
-// Zustand in Worten, z. B. "verbunden, Motor laeuft"
-void status(char* out, size_t size);
+// Fehlersuche: TCP-Verbindung zu host:port testen, jeder Schritt an out
+void testTcp(const char* host, uint16_t port, void (*out)(const char*));
 
 }  // namespace cerbo

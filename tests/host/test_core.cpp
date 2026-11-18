@@ -236,7 +236,29 @@ static void testConsole() {
     uint8_t in = 9;
     CHECK(parseEngineInput(arg, in) && in == 0);
     CHECK(parseEngineInput("4", in) && in == 4);
-    CHECK(!parseEngineInput("5", in) && !parseEngineInput("", in) && !parseEngineInput("12", in) && in == 4);
+    CHECK(parseEngineInput("247", in) && in == 247);
+    CHECK(!parseEngineInput("248", in) && !parseEngineInput("", in) && !parseEngineInput("1x", in) && in == 247);
+
+    // Modbus TCP
+    uint8_t rq[12];
+    modbusReadRequest(rq, 0x1234, 1, MODBUS_REG_DIGITALINPUT_STATE, 1);
+    const uint8_t expRq[12] = {0x12, 0x34, 0, 0, 0, 6, 1, 3, 0x0D, 0x5E, 0, 1};
+    CHECK(memcmp(rq, expRq, 12) == 0);
+    const uint8_t ok[11] = {0x12, 0x34, 0, 0, 0, 5, 1, 3, 2, 0, 3};
+    uint16_t val = 0; uint8_t exc = 0; size_t used = 0;
+    CHECK(parseModbusReadResponse(ok, 5, 0x1234, 1, val, exc, used) == ModbusResult::Incomplete);
+    CHECK(parseModbusReadResponse(ok, 10, 0x1234, 1, val, exc, used) == ModbusResult::Incomplete);
+    CHECK(parseModbusReadResponse(ok, 11, 0x1234, 1, val, exc, used) == ModbusResult::Value && val == 3 && used == 11);
+    CHECK(parseModbusReadResponse(ok, 11, 0x1235, 1, val, exc, used) == ModbusResult::Invalid);
+    CHECK(parseModbusReadResponse(ok, 11, 0x1234, 2, val, exc, used) == ModbusResult::Invalid);
+    const uint8_t ex[9] = {0x12, 0x34, 0, 0, 0, 3, 1, 0x83, 0x0B};
+    CHECK(parseModbusReadResponse(ex, 9, 0x1234, 1, val, exc, used) == ModbusResult::Exception && exc == 0x0B && used == 9);
+    const uint8_t bad[9] = {0x12, 0x34, 0, 1, 0, 3, 1, 0x83, 0x0B};
+    CHECK(parseModbusReadResponse(bad, 9, 0x1234, 1, val, exc, used) == ModbusResult::Invalid);
+    CHECK(engineFromDigitalInputState(3) == EngineState::Running && engineFromDigitalInputState(2) == EngineState::Off);
+    CHECK(engineFromDigitalInputState(1) == EngineState::Running && engineFromDigitalInputState(0) == EngineState::Off);
+    CHECK(engineFromDigitalInputState(10) == EngineState::Running && engineFromDigitalInputState(11) == EngineState::Off);
+    CHECK(engineFromDigitalInputState(8) == EngineState::Unknown && engineFromDigitalInputState(7) == EngineState::Unknown);
     long v = -1;
     CHECK(parseVictronInt("{\"value\": 1}", 12, v) && v == 1);
     CHECK(parseVictronInt("{\"value\":0}", 11, v) && v == 0);

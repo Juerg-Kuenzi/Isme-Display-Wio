@@ -55,7 +55,7 @@ Das Display liest die Datensätze `$PXISWND` und sendet Kommandos als `$PXISWNS`
 
 1. **WLAN-Chip aktualisieren:** Das WLAN des Wio Terminal läuft über einen eigenen Chip (RTL8720DN). Er braucht einmalig die aktuelle Firmware von Seeed, die mit dem `ambd_flash_tool` aufgespielt wird. Anleitung: [Wio Terminal Network Overview](https://wiki.seeedstudio.com/Wio-Terminal-Network-Overview/).
 2. **Arduino IDE 2.x:** Unter *Datei > Einstellungen > Zusätzliche Boardverwalter-URLs* `https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json` eintragen. In der Boardverwaltung „Seeed SAMD Boards“ installieren (gebaut wird mit 1.8.6) und das Board „Seeeduino Wio Terminal“ wählen.
-3. **Bibliotheken:** „Seeed Arduino rpcWiFi“ (installiert die übrigen WLAN-Bibliotheken mit), „FlashStorage_SAMD“ und „PubSubClient“ (ab 2.0.0). Die Anzeige-Bibliothek ist im Boardpaket enthalten.
+3. **Bibliotheken:** „Seeed Arduino rpcWiFi“ (installiert die übrigen WLAN-Bibliotheken mit), und „FlashStorage_SAMD“. Die Anzeige-Bibliothek ist im Boardpaket enthalten.
 4. **Hochladen:** `firmware/IsmeDisplay/IsmeDisplay.ino` öffnen und hochladen.
 5. **Zugangsdaten** über die USB-Konsole setzen (siehe unten).
 
@@ -90,9 +90,9 @@ status
 | `ssid=<name>` | SSID setzen (1–32 Zeichen), speichern, neu verbinden. Meldet sofort „wird gespeichert …“, dann „gespeichert“ und „Verbinde neu …“, danach „WLAN verbunden, IP …“ oder nach 30 s einen Hinweis, falls keine Verbindung zustande kommt |
 | `pass=<pw>` | Passwort setzen (leer = offenes Netz, sonst 8–64 Zeichen), speichern, neu verbinden, Meldungen wie bei `ssid=` |
 | `cerbo=<ip>` | Adresse des Cerbo GX für das Motorsignal |
-| `portal=<id>` | VRM Portal ID des Cerbo (*Einstellungen > VRM online portal*) |
-| `mqttpass=<pw>` | MQTT-Passwort des Cerbo (Profil *Secured* oder *Weak*); wird nie angezeigt |
-| `motor=<n>` | Motorsignal: `0` aus, `1`–`4` Digitaleingang des Cerbo |
+| `motor=<n>` | Motorsignal: `0` aus, sonst Geräte-ID (Modbus Unit-ID) des Digitaleingangs |
+| `tcptest=<ip>[:port]` | Fehlersuche: TCP-Verbindung testen (Standard Port 502) |
+| `udp=aus` / `udp=ein` | Fehlersuche: UDP-Empfang anhalten, nur bis zum Neustart |
 | `log=ein` / `log=aus` | Protokoll für die Fehlersuche: jede Sekunde ein Lebenszeichen, jeder Schritt der Cerbo-Verbindung mit Dauer, Tasten, langsame Abschnitte der Hauptschleife. Nur bis zum nächsten Neustart. |
 | `help` | Befehlsliste |
 
@@ -120,7 +120,7 @@ firmware/IsmeDisplay/
   core.h, core.cpp     Kernlogik ohne Arduino: NMEA, YDWG-02-RAW, Temperatur-PGNs,
                        Raymarine-Helligkeit, Duplikatfilter, Abgasalarm, Datenausfall,
                        Formatierung, Konsole, Motorsignal (EngineGate), Seiten
-  cerbo.h, cerbo.cpp   Motorsignal vom Cerbo GX über MQTT (TLS, PubSubClient)
+  cerbo.h, cerbo.cpp   Motorsignal vom Cerbo GX über Modbus TCP
   config.h             Version, Standardwerte, Zeiten
   secrets.h.example    optionale Startwerte für die WLAN-Zugangsdaten
 tests/host/            PC-Tests der Kernlogik (g++), mit denselben Testdaten wie die App
@@ -133,18 +133,24 @@ make -C tests/host
 
 ## Motorsignal vom Cerbo GX
 
-Das Display liest den Zustand eines Digitaleingangs des Cerbo GX über MQTT im lokalen Netz: Port 8883, verschlüsselt (TLS ohne Zertifikatsprüfung, der Cerbo hat ein selbst signiertes Zertifikat), mit Passwort – passend zum Sicherheitsprofil *Secured* oder *Weak*. Gelesen wird `N/<Portal ID>/digitalinput/<Eingang>/State`.
+Das Display liest den Zustand eines Digitaleingangs des Cerbo GX über **Modbus TCP** im lokalen Netz: Port 502, Register 3422 (`/State` von `com.victronenergy.digitalinput`), Unit-ID = Geräte-ID des Eingangs. Jede Sekunde eine Abfrage über eine offen gehaltene Verbindung.
+
+Warum nicht MQTT: Mit den Sicherheitsprofilen *Secured* und *Weak* verlangt der Cerbo für MQTT TLS. Der TLS-Client des WLAN-Chips im Wio (RTL8720DN) scheitert am Handshake mit dem Cerbo (Abbruch durch den Cerbo, Windows handelt ECDHE/X25519 mit AES-256-GCM aus). Unverschlüsseltes MQTT gibt es nur im Profil *Unsecured*, dann aber ohne jedes Passwort für den ganzen Cerbo.
 
 Einrichtung:
 
-1. Cerbo: *Einstellungen > Integrationen > MQTT-Zugang* einschalten (ab Werk aus; bis Venus OS 3.5x unter *Dienste*). Kontrolle vom PC: `Test-NetConnection <IP des Cerbo> -Port 8883` muss `TcpTestSucceeded : True` zeigen.
-2. Cerbo: den Digitaleingang auf den Typ **Generic I/O** stellen. Zustand *high* muss „Motor läuft“ bedeuten; bei Bedarf mit *Invert* umkehren. Ein geschlossener Kontakt (z. B. Relais an „Zündung ein“ des Motors) zieht den Eingang auf *low*.
-3. Display, USB-Konsole: `cerbo=<IP des Cerbo>`, `portal=<Portal ID>`, `mqttpass=<Passwort>`.
-4. Display: *Einstellungen > Motorsignal* auf den Eingang stellen (oder Konsole `motor=1`). Die Seite zeigt den Zustand der Verbindung, ebenso `status` an der Konsole. `motor=0` schaltet das Motorsignal wieder aus.
+1. Cerbo: *Einstellungen > Integrationen > Digitale E/A*: den Eingang auf **Bilgepumpe** stellen (der Typ *Generic I/O* steht im Menü nicht zur Wahl), Alarm aus, Name z. B. „Motor“. *ein* muss „Motor läuft“ bedeuten, sonst *Invertieren*. **Nicht „Generator“** wählen: dieser Typ meldet dem Multi/Quattro einen Generator am AC-Eingang und steuert die Generator-Start/Stopp-Logik.
+2. Cerbo: *Einstellungen > Integrationen > Modbus TCP* einschalten. Unter *Verfügbare Dienste* steht der Eingang mit seiner Geräte-ID, z. B. „Motor – com.victronenergy.digitalinput | Geräte-ID: 1“. Kontrolle vom PC: `Test-NetConnection <IP des Cerbo> -Port 502`.
+3. Display, USB-Konsole: `cerbo=<IP des Cerbo>`.
+4. Display: *Einstellungen > Motorsignal* auf die Geräte-ID stellen (oder Konsole `motor=1`). Die Seite zeigt den Zustand der Verbindung, ebenso `status` an der Konsole. `motor=0` schaltet das Motorsignal aus.
 
-Ohne Relais testen: Im Cerbo *Invert* des Eingangs umschalten – das Display muss zwischen „Motor aus“ und „Motor läuft“ wechseln. Auf der Seite Abgastemperatur steht unten „Motor aus: Abgasalarm ruht“ bzw. kurz nach dem Start „Motor gestartet: Schonfrist“.
+Verstanden werden die Zustände low/high (Generic I/O), aus/ein (Bilgepumpe), nein/ja und läuft/gestoppt (Generator); Alarmtypen ergeben „Typ des Eingangs passt nicht“.
 
-Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist unter 2 s. Ist der Cerbo ausgeschaltet oder nicht im Netz, bis etwa 30 s, denn der WLAN-Chip kennt für den TCP-Verbindungsaufbau keine Zeitgrenze. Deshalb beginnt er erst 20 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Die Statuszeile nennt die Stufe, an der es scheitert: *TLS-Verbindung fehlgeschlagen* (auch: Cerbo nicht erreichbar), *MQTT-Passwort falsch*. Fehlersuche: Konsole `log=ein`.
+Hinweis Sicherheit: Modbus TCP hat kein Passwort. Jedes Gerät im selben Netz kann Werte lesen und einige Einstellungen schreiben (z. B. ESS-Sollwerte). Das Sicherheitsprofil für Weboberfläche und MQTT bleibt davon unberührt.
+
+Ohne Relais testen: Im Cerbo *Invertieren* des Eingangs umschalten – das Display muss zwischen „Motor aus“ und „Motor läuft“ wechseln. Auf der Seite Abgastemperatur steht unten „Motor aus: Abgasalarm ruht“ bzw. kurz nach dem Start „Motor gestartet: Schonfrist“.
+
+Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist unter 1 s. Ist der Cerbo ausgeschaltet oder nicht im Netz, bis etwa 30 s, denn der WLAN-Chip kennt dafür keine Zeitgrenze (ein eigener nicht-blockierender Aufbau führte zu Abstürzen). Deshalb beginnt er erst 20 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Fehlersuche: Konsole `log=ein`.
 
 ## Raymarine-Helligkeit (PGN 126720)
 

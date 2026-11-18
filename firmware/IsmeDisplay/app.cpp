@@ -82,11 +82,11 @@ struct Settings {
     char password[PASSWORD_MAX + 1];   // nullterminiert, leer = offenes Netz
     uint8_t nightLevel;                // ab 1.6.0: Helligkeit in der Nacht, Stufe 1 bis 10
     uint8_t helmGroup;                 // ab 1.7.0: nachts der Helligkeit dieser Raymarine-Gruppe folgen, 0 = aus
-    // ab 2.0.0: Motorsignal vom Cerbo GX (MQTT)
-    uint8_t engineInput;               // 0 = aus, 1-4 = Digitaleingang des Cerbo
+    // ab 2.0.0: Motorsignal vom Cerbo GX (Modbus TCP)
+    uint8_t engineInput;               // 0 = aus, sonst Geraete-ID (Modbus Unit-ID) des Digitaleingangs
     char cerboHost[CERBO_HOST_MAX + 1];
-    char portalId[PORTAL_ID_MAX + 1];
-    char mqttPassword[MQTT_PASSWORD_MAX + 1];
+    char portalId[PORTAL_ID_MAX + 1];           // nicht mehr benutzt (war MQTT), wird geloescht
+    char mqttPassword[MQTT_PASSWORD_MAX + 1];   // nicht mehr benutzt (war MQTT), wird geloescht
 };
 
 Settings settings;
@@ -143,10 +143,15 @@ void loadSettings() {
     if (settings.toneHz < TONE_MIN_HZ || settings.toneHz > TONE_MAX_HZ) settings.toneHz = TONE_DEFAULT_HZ;
     settings.ssid[sizeof(settings.ssid) - 1] = 0;
     settings.password[sizeof(settings.password) - 1] = 0;
-    if (settings.engineInput > 4) settings.engineInput = 0;
+    if (settings.engineInput > 247) settings.engineInput = 0;
     settings.cerboHost[sizeof(settings.cerboHost) - 1] = 0;
-    settings.portalId[sizeof(settings.portalId) - 1] = 0;
-    settings.mqttPassword[sizeof(settings.mqttPassword) - 1] = 0;
+    // Vorabversionen 2.0.0-2.0.6 (MQTT) speicherten Portal ID und MQTT-Passwort:
+    // nicht mehr gebraucht, das Passwort soll nicht im Flash bleiben
+    if (settings.portalId[0] || settings.mqttPassword[0]) {
+        memset(settings.portalId, 0, sizeof(settings.portalId));
+        memset(settings.mqttPassword, 0, sizeof(settings.mqttPassword));
+        saveSettings();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -949,7 +954,7 @@ void renderMenu() {
         }
         if (i == ITEM_HELM) snprintf(value, sizeof(value), "%s", helmGroupName(settings.helmGroup));
         if (i == ITEM_ENGINE) {
-            if (settings.engineInput) snprintf(value, sizeof(value), "Eingang %u", settings.engineInput);
+            if (settings.engineInput) snprintf(value, sizeof(value), "ID %u", settings.engineInput);
             else snprintf(value, sizeof(value), "Aus");
         }
         if (i == ITEM_TONE) snprintf(value, sizeof(value), "%u Hz", settings.toneHz);
@@ -1091,7 +1096,7 @@ void renderDetail(uint32_t now) {
         char state[64] = "";
         if (testEngineInput == settings.engineInput && settings.engineInput) cerbo::status(state, sizeof(state));
         char name[16];
-        if (testEngineInput) snprintf(name, sizeof(name), "Eingang %d", testEngineInput);
+        if (testEngineInput) snprintf(name, sizeof(name), "Geraete-ID %d", testEngineInput);
         else snprintf(name, sizeof(name), "Aus");
         snprintf(sig, sizeof(sig), "%s|%s", name, state);
         if (changed(R_EDITOR, sig)) {
@@ -1130,7 +1135,7 @@ void renderDetail(uint32_t now) {
     else if (item == ITEM_TIMEZONE) footer("Auf/ab: Zeitzone   Drücken: speichern");
     else if (item == ITEM_NIGHT) footer("Auf/ab: Stufe   Drücken: speichern");
     else if (item == ITEM_HELM) footer("Auf/ab: Gruppe   Drücken: speichern");
-    else if (item == ITEM_ENGINE) footer("Auf/ab: Eingang   Drücken: speichern");
+    else if (item == ITEM_ENGINE) footer("Auf/ab: Geräte-ID   Drücken: speichern");
     else footer(itemIsLocal(item) ? "Drücken: speichern   Taste links: zurück" : "Drücken: senden   Taste links: zurück");
 }
 
@@ -1349,7 +1354,7 @@ void submitDetail() {
             saveSettings();
             cerbo::reset();
             if (settings.engineInput)
-                snprintf(messages[detailItem], sizeof(messages[0]), "Motorsignal von Eingang %u.", settings.engineInput);
+                snprintf(messages[detailItem], sizeof(messages[0]), "Motorsignal von Geraete-ID %u.", settings.engineInput);
             else
                 snprintf(messages[detailItem], sizeof(messages[0]), "Motorsignal aus.");
             break;
@@ -1413,7 +1418,7 @@ void handleKey(int key) {
                 break;
             }
             if (detailItem == ITEM_ENGINE) {
-                if (key == K_UP && testEngineInput < 4) testEngineInput++;
+                if (key == K_UP && testEngineInput < 247) testEngineInput++;
                 if (key == K_DOWN && testEngineInput > 0) testEngineInput--;
                 if (key == K_UP || key == K_DOWN) messages[ITEM_ENGINE][0] = 0;
                 if (key == K_LEFT) show(UiScreen::Menu);
@@ -1520,13 +1525,11 @@ void consoleStatus() {
     consolePrint(line);
     char st[64];
     cerbo::status(st, sizeof(st));
-    if (settings.engineInput) snprintf(line, sizeof(line), "Motorsignal    : Eingang %u, %s", settings.engineInput, st);
+    if (settings.engineInput) snprintf(line, sizeof(line), "Motorsignal    : Geraete-ID %u, %s", settings.engineInput, st);
     else snprintf(line, sizeof(line), "Motorsignal    : aus");
     consolePrint(line);
-    snprintf(line, sizeof(line), "Cerbo          : %s, Portal ID %s, MQTT-Passwort %s",
-             settings.cerboHost[0] ? settings.cerboHost : "(nicht gesetzt)",
-             settings.portalId[0] ? settings.portalId : "(nicht gesetzt)",
-             settings.mqttPassword[0] ? "gesetzt" : "(nicht gesetzt)");
+    snprintf(line, sizeof(line), "Cerbo          : %s (Modbus TCP, Port 502)",
+             settings.cerboHost[0] ? settings.cerboHost : "(nicht gesetzt)");
     consolePrint(line);
     snprintf(line, sizeof(line), "Port ChainCounter: %u, Port NMEA2000: %u",
              static_cast<unsigned>(settings.chainPort), static_cast<unsigned>(settings.n2kPort));
@@ -1556,13 +1559,12 @@ void handleConsoleLine(char* text) {
             consolePrint("  ssid=<name>  WLAN-SSID setzen (1-32 Zeichen), gespeichert, verbindet neu");
             consolePrint("  pass=<pw>    WLAN-Passwort setzen (leer oder 8-64 Zeichen), gespeichert, verbindet neu");
             consolePrint("Nach ssid= oder pass= meldet das Display, ob die Verbindung zustande kommt.");
-            consolePrint("  cerbo=<ip>   Adresse des Cerbo GX (MQTT, Port 8883, TLS)");
-            consolePrint("  portal=<id>  VRM Portal ID des Cerbo");
-            consolePrint("  mqttpass=<pw> MQTT-Passwort des Cerbo (Profil Secured/Weak)");
+            consolePrint("  cerbo=<ip>   Adresse des Cerbo GX (Modbus TCP, Port 502)");
+            consolePrint("  motor=<n>    Motorsignal: 0 = aus, sonst Geraete-ID des Digitaleingangs");
+            consolePrint("               (Cerbo: Integrationen > Modbus TCP > Verfuegbare Dienste)");
             consolePrint("  log=ein / log=aus Protokoll an der Konsole ein/aus (Fehlersuche, nach Neustart aus)");
-            consolePrint("Fehlersuche: tcptest=<ip>[:port] (eigener Test), tcptest2=<ip>[:port] (WiFiClient),");
-            consolePrint("  udp=aus / udp=ein (UDP-Empfang anhalten)");
-            consolePrint("  motor=<n>    Motorsignal: 0 = aus, 1-4 = Digitaleingang des Cerbo");
+            consolePrint("  tcptest=<ip>[:port] Verbindung testen (Fehlersuche, Standard Port 502)");
+            consolePrint("  udp=aus / udp=ein UDP-Empfang anhalten (Fehlersuche)");
             break;
         case ConsoleCommand::Status:
             consoleStatus();
@@ -1593,30 +1595,18 @@ void handleConsoleLine(char* text) {
             consolePrint("OK: Adresse gespeichert.");
             break;
         case ConsoleCommand::Portal:
-            if (!validPortalId(arg)) { consolePrint("FEHLER: Portal ID: 1-15 Buchstaben oder Ziffern"); break; }
-            consolePrintNow("Portal ID wird gespeichert ...");
-            snprintf(settings.portalId, sizeof(settings.portalId), "%s", arg);
-            saveSettings();
-            cerbo::reset();
-            consolePrint("OK: Portal ID gespeichert.");
-            break;
         case ConsoleCommand::MqttPassword:
-            if (!validMqttPassword(arg)) { consolePrint("FEHLER: MQTT-Passwort muss 1-64 Zeichen haben"); break; }
-            consolePrintNow("MQTT-Passwort wird gespeichert ...");
-            snprintf(settings.mqttPassword, sizeof(settings.mqttPassword), "%s", arg);
-            saveSettings();
-            cerbo::reset();
-            consolePrint("OK: MQTT-Passwort gespeichert.");
+            consolePrint("Nicht mehr noetig: das Motorsignal kommt jetzt per Modbus TCP (help).");
             break;
         case ConsoleCommand::EngineInput: {
             uint8_t in;
-            if (!parseEngineInput(arg, in)) { consolePrint("FEHLER: motor=0 (aus) oder motor=1 bis motor=4"); break; }
+            if (!parseEngineInput(arg, in)) { consolePrint("FEHLER: motor=0 (aus) oder motor=<Geraete-ID 1-247>"); break; }
             consolePrintNow("Motorsignal wird gespeichert ...");
             settings.engineInput = in;
             testEngineInput = in;
             saveSettings();
             cerbo::reset();
-            if (in) snprintf(line, sizeof(line), "OK: Motorsignal von Eingang %u, Verbindung in etwa 20 s (status).", in);
+            if (in) snprintf(line, sizeof(line), "OK: Motorsignal von Geraete-ID %u, Verbindung in etwa 20 s (status).", in);
             else snprintf(line, sizeof(line), "OK: Motorsignal aus.");
             consolePrint(line);
             break;
@@ -1625,11 +1615,11 @@ void handleConsoleLine(char* text) {
         case ConsoleCommand::TcpTestClassic: {
             char host[40];
             uint16_t port;
-            if (!parseHostPort(arg, host, sizeof(host), port, 8883)) {
-                consolePrint("FEHLER: tcptest=<ip>[:port], z. B. tcptest=192.168.5.12:80");
+            if (!parseHostPort(arg, host, sizeof(host), port, MODBUS_TCP_PORT)) {
+                consolePrint("FEHLER: tcptest=<ip>[:port], z. B. tcptest=192.168.5.12:502");
                 break;
             }
-            cerbo::testTcp(host, port, cmd == ConsoleCommand::TcpTestClassic, logLine);
+            cerbo::testTcp(host, port, logLine);
             break;
         }
         case ConsoleCommand::Udp:
@@ -1723,7 +1713,7 @@ void appLoop() {
     // Hauptseite und wenn seit 10 s keine Taste gedrueckt wurde
     bool idle = screen == UiScreen::Main && now - lastKeyAt >= 10000;
     sectionBegin();
-    cerbo::service({settings.engineInput, settings.cerboHost, settings.portalId, settings.mqttPassword},
+    cerbo::service({settings.engineInput, settings.cerboHost},
                    wifiConnected, idle, now);
     sectionEnd("Cerbo");
     engineGate.onState(settings.engineInput ? cerbo::engineState() : EngineState::Unknown, now);

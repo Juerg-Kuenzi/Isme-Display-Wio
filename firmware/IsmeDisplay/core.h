@@ -289,9 +289,25 @@ const size_t CERBO_HOST_MAX = 39, PORTAL_ID_MAX = 15, MQTT_PASSWORD_MAX = 64;
 bool validCerboHost(const char* s);      // 1-39 Zeichen ohne Leerzeichen, z. B. 192.168.5.20
 bool validPortalId(const char* s);       // 1-15 Buchstaben/Ziffern, z. B. c0619ab68636
 bool validMqttPassword(const char* s);   // 1-64 Zeichen
-bool parseEngineInput(const char* s, uint8_t& input);
+bool parseEngineInput(const char* s, uint8_t& input);   // "0" (aus) bis "247" (Modbus Unit-ID)
+
+// Modbus TCP: Holding-Register lesen (Funktion 3). Anfrage immer 12 Bytes.
+const uint16_t MODBUS_TCP_PORT = 502;
+const uint16_t MODBUS_REG_DIGITALINPUT_STATE = 3422;   // com.victronenergy.digitalinput /State
+void modbusReadRequest(uint8_t out[12], uint16_t transaction, uint8_t unit, uint16_t reg, uint16_t count);
+// Antwort auf eine Anfrage mit count = 1 auswerten.
+enum class ModbusResult : uint8_t { Incomplete, Value, Exception, Invalid };
+// Liest aus buf (len Bytes). consumed = Laenge der Antwort, sobald vollstaendig.
+// Value: value gesetzt; Exception: exceptionCode gesetzt (z. B. 0x0B = Geraet fehlt).
+ModbusResult parseModbusReadResponse(const uint8_t* buf, size_t len, uint16_t transaction, uint8_t unit,
+                                     uint16_t& value, uint8_t& exceptionCode, size_t& consumed);
+
+// /State eines Digitaleingangs (Victron) -> Motorzustand. Je nach Typ des Eingangs:
+// 0/1 low/high (Generic I/O), 2/3 aus/ein (Bilgepumpe), 4/5 nein/ja,
+// 10/11 laeuft/gestoppt (Generator). Alarmtypen (Tuer, Rauch ...) -> Unknown.
+EngineState engineFromDigitalInputState(long state);
 // "192.168.5.12:8883" oder "192.168.5.12" (dann defaultPort); host max. hostSize-1 Zeichen
-bool parseHostPort(const char* s, char* host, size_t hostSize, uint16_t& port, uint16_t defaultPort);   // "0" (aus) bis "4"
+bool parseHostPort(const char* s, char* host, size_t hostSize, uint16_t& port, uint16_t defaultPort);
 
 // Wert aus einer Victron-MQTT-Nachricht {"value": 1}. Liefert false bei leerer
 // Nachricht (Geraet weg) oder {"value": null}.

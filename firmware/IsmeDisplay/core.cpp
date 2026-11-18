@@ -539,8 +539,14 @@ bool validMqttPassword(const char* s) {
 }
 
 bool parseEngineInput(const char* s, uint8_t& input) {
-    if (s[0] < '0' || s[0] > '4' || s[1] != 0) return false;
-    input = static_cast<uint8_t>(s[0] - '0');
+    if (!*s || strlen(s) > 3) return false;
+    unsigned v = 0;
+    for (const char* p = s; *p; p++) {
+        if (*p < '0' || *p > '9') return false;
+        v = v * 10 + static_cast<unsigned>(*p - '0');
+    }
+    if (v > 247) return false;
+    input = static_cast<uint8_t>(v);
     return true;
 }
 
@@ -566,6 +572,42 @@ bool parseHostPort(const char* s, char* host, size_t hostSize, uint16_t& port, u
     host[n] = 0;
     port = static_cast<uint16_t>(p);
     return true;
+}
+
+void modbusReadRequest(uint8_t out[12], uint16_t transaction, uint8_t unit, uint16_t reg, uint16_t count) {
+    out[0] = transaction >> 8; out[1] = transaction & 0xFF;
+    out[2] = 0; out[3] = 0;          // Protokoll 0 = Modbus
+    out[4] = 0; out[5] = 6;          // folgende Bytes
+    out[6] = unit;
+    out[7] = 3;                      // Holding-Register lesen
+    out[8] = reg >> 8; out[9] = reg & 0xFF;
+    out[10] = count >> 8; out[11] = count & 0xFF;
+}
+
+ModbusResult parseModbusReadResponse(const uint8_t* buf, size_t len, uint16_t transaction, uint8_t unit,
+                                     uint16_t& value, uint8_t& exceptionCode, size_t& consumed) {
+    if (len < 6) return ModbusResult::Incomplete;
+    size_t follow = (static_cast<size_t>(buf[4]) << 8) | buf[5];
+    if (buf[2] != 0 || buf[3] != 0 || follow < 3 || follow > 253) return ModbusResult::Invalid;
+    if (len < 6 + follow) return ModbusResult::Incomplete;
+    consumed = 6 + follow;
+    uint16_t tid = (static_cast<uint16_t>(buf[0]) << 8) | buf[1];
+    if (tid != transaction || buf[6] != unit) return ModbusResult::Invalid;
+    if (buf[7] == (3 | 0x80)) {
+        exceptionCode = buf[8];
+        return ModbusResult::Exception;
+    }
+    if (buf[7] != 3 || follow != 5 || buf[8] != 2) return ModbusResult::Invalid;
+    value = (static_cast<uint16_t>(buf[9]) << 8) | buf[10];
+    return ModbusResult::Value;
+}
+
+EngineState engineFromDigitalInputState(long state) {
+    switch (state) {
+        case 1: case 3: case 5: case 10: return EngineState::Running;
+        case 0: case 2: case 4: case 11: return EngineState::Off;
+        default: return EngineState::Unknown;
+    }
 }
 
 bool parseVictronInt(const char* payload, size_t length, long& value) {
