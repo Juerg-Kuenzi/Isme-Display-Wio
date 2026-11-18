@@ -1169,6 +1169,8 @@ KeyState keys[K_COUNT] = {
     {KEY_MUTE, false, false, 0, 0},    {KEY_NIGHT, false, false, 0, 0},
 };
 
+uint32_t lastKeyAt = 0;
+
 int pollKeys(uint32_t now) {
     for (int i = 0; i < K_COUNT; i++) {
         KeyState& k = keys[i];
@@ -1522,7 +1524,7 @@ void handleConsoleLine(char* text) {
             consolePrint("  cerbo=<ip>   Adresse des Cerbo GX (MQTT, Port 8883, TLS)");
             consolePrint("  portal=<id>  VRM Portal ID des Cerbo");
             consolePrint("  mqttpass=<pw> MQTT-Passwort des Cerbo (Profil Secured/Weak)");
-            consolePrint("Motorsignal einschalten: Einstellungen > Motorsignal.");
+            consolePrint("  motor=<n>    Motorsignal: 0 = aus, 1-4 = Digitaleingang des Cerbo");
             break;
         case ConsoleCommand::Status:
             consoleStatus();
@@ -1568,6 +1570,19 @@ void handleConsoleLine(char* text) {
             cerbo::reset();
             consolePrint("OK: MQTT-Passwort gespeichert.");
             break;
+        case ConsoleCommand::EngineInput: {
+            uint8_t in;
+            if (!parseEngineInput(arg, in)) { consolePrint("FEHLER: motor=0 (aus) oder motor=1 bis motor=4"); break; }
+            consolePrintNow("Motorsignal wird gespeichert ...");
+            settings.engineInput = in;
+            testEngineInput = in;
+            saveSettings();
+            cerbo::reset();
+            if (in) snprintf(line, sizeof(line), "OK: Motorsignal von Eingang %u, Verbindung in etwa 20 s (status).", in);
+            else snprintf(line, sizeof(line), "OK: Motorsignal aus.");
+            consolePrint(line);
+            break;
+        }
         case ConsoleCommand::Unknown:
             snprintf(line, sizeof(line), "FEHLER: unbekannter Befehl '%.60s' (help)", arg);
             consolePrint(line);
@@ -1616,10 +1631,14 @@ void appLoop() {
     if (key >= 0) {
         handleKey(key);
         renderNeeded = true;
+        lastKeyAt = now;
     }
     chain.onTick(now);
+    // Verbindungsaufbau zum Cerbo blockiert einige Sekunden: nur auf der
+    // Hauptseite und wenn seit 10 s keine Taste gedrueckt wurde
+    bool idle = screen == UiScreen::Main && now - lastKeyAt >= 10000;
     cerbo::service({settings.engineInput, settings.cerboHost, settings.portalId, settings.mqttPassword},
-                   wifiConnected, now);
+                   wifiConnected, idle, now);
     engineGate.onState(settings.engineInput ? cerbo::engineState() : EngineState::Unknown, now);
     exhaust.update(now, settings.alarmLimit, engineGate.monitorAllowed(exhaust.celsius(), now));
     if (pages.onAlarm(exhaust.alarmActive()) && screen == UiScreen::Main) {

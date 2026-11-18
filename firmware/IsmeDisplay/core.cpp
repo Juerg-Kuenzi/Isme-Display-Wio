@@ -476,6 +476,7 @@ ConsoleCommand parseConsoleLine(char* line, const char** arg) {
     if (strncmp(s, "cerbo=", 6) == 0) { *arg = s + 6; return ConsoleCommand::CerboHost; }
     if (strncmp(s, "portal=", 7) == 0) { *arg = s + 7; return ConsoleCommand::Portal; }
     if (strncmp(s, "mqttpass=", 9) == 0) { *arg = s + 9; return ConsoleCommand::MqttPassword; }
+    if (strncmp(s, "motor=", 6) == 0) { *arg = s + 6; return ConsoleCommand::EngineInput; }
     return ConsoleCommand::Unknown;
 }
 
@@ -529,6 +530,12 @@ bool validPortalId(const char* s) {
 bool validMqttPassword(const char* s) {
     size_t n = strlen(s);
     return n >= 1 && n <= MQTT_PASSWORD_MAX;
+}
+
+bool parseEngineInput(const char* s, uint8_t& input) {
+    if (s[0] < '0' || s[0] > '4' || s[1] != 0) return false;
+    input = static_cast<uint8_t>(s[0] - '0');
+    return true;
 }
 
 bool parseVictronInt(const char* payload, size_t length, long& value) {

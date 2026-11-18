@@ -257,7 +257,7 @@ int raymarineLevel(uint8_t percent);
 const size_t SSID_MAX = 32;
 const size_t PASSWORD_MIN = 8, PASSWORD_MAX = 64;
 
-enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, CerboHost, Portal, MqttPassword, Unknown };
+enum class ConsoleCommand { Empty, Help, Status, Ssid, Password, CerboHost, Portal, MqttPassword, EngineInput, Unknown };
 
 // Wertet eine Zeile der USB-Konsole aus. Leerzeichen am Rand werden entfernt
 // (die Zeile wird dabei veraendert). arg zeigt bei Ssid/Password auf den Wert
@@ -289,6 +289,7 @@ const size_t CERBO_HOST_MAX = 39, PORTAL_ID_MAX = 15, MQTT_PASSWORD_MAX = 64;
 bool validCerboHost(const char* s);      // 1-39 Zeichen ohne Leerzeichen, z. B. 192.168.5.20
 bool validPortalId(const char* s);       // 1-15 Buchstaben/Ziffern, z. B. c0619ab68636
 bool validMqttPassword(const char* s);   // 1-64 Zeichen
+bool parseEngineInput(const char* s, uint8_t& input);   // "0" (aus) bis "4"
 
 // Wert aus einer Victron-MQTT-Nachricht {"value": 1}. Liefert false bei leerer
 // Nachricht (Geraet weg) oder {"value": null}.

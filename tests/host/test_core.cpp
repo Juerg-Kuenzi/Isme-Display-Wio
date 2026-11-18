@@ -218,6 +218,11 @@ static void testConsole() {
     CHECK(!validCerboHost("") && !validCerboHost("192.168 .5.20"));
     CHECK(!validPortalId("c0619ab6-8636") && !validPortalId(""));
     CHECK(!validMqttPassword(""));
+    char m1[] = "motor=0"; CHECK(parseConsoleLine(m1, &arg) == ConsoleCommand::EngineInput);
+    uint8_t in = 9;
+    CHECK(parseEngineInput(arg, in) && in == 0);
+    CHECK(parseEngineInput("4", in) && in == 4);
+    CHECK(!parseEngineInput("5", in) && !parseEngineInput("", in) && !parseEngineInput("12", in) && in == 4);
     long v = -1;
     CHECK(parseVictronInt("{\"value\": 1}", 12, v) && v == 1);
     CHECK(parseVictronInt("{\"value\":0}", 11, v) && v == 0);

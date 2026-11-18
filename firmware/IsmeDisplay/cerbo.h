@@ -28,9 +28,11 @@ struct Config {
     const char* password;   // MQTT-Passwort ("Secured"/"Weak")
 };
 
-// In jeder Schleife aufrufen. Baut die Verbindung bei Bedarf auf (blockiert dann
-// einige Sekunden fuer den TLS-Handshake, deshalb hoechstens alle 30 s bis 5 min).
-void service(const Config& c, bool wifiUp, uint32_t now);
+// In jeder Schleife aufrufen. Der Verbindungsaufbau blockiert die Schleife einige
+// Sekunden (hoechstens etwa 12 s). Er beginnt fruehestens 20 s nach der WLAN-
+// Verbindung oder einer Aenderung, nur wenn allowConnect gesetzt ist (Hauptseite,
+// keine Bedienung), und nach Fehlern erst wieder nach 30 s bis 5 min.
+void service(const Config& c, bool wifiUp, bool allowConnect, uint32_t now);
 
 // Nach einer Aenderung der Einstellungen: Verbindung trennen, neu aufbauen
 void reset();

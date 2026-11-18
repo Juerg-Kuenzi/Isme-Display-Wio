@@ -92,6 +92,7 @@ status
 | `cerbo=<ip>` | Adresse des Cerbo GX für das Motorsignal |
 | `portal=<id>` | VRM Portal ID des Cerbo (*Einstellungen > VRM online portal*) |
 | `mqttpass=<pw>` | MQTT-Passwort des Cerbo (Profil *Secured* oder *Weak*); wird nie angezeigt |
+| `motor=<n>` | Motorsignal: `0` aus, `1`–`4` Digitaleingang des Cerbo |
 | `help` | Befehlsliste |
 
 Hinweise zum Terminalprogramm:
@@ -138,11 +139,11 @@ Einrichtung:
 1. Cerbo: *Einstellungen > Dienste > MQTT Access* einschalten.
 2. Cerbo: den Digitaleingang auf den Typ **Generic I/O** stellen. Zustand *high* muss „Motor läuft“ bedeuten; bei Bedarf mit *Invert* umkehren. Ein geschlossener Kontakt (z. B. Relais an „Zündung ein“ des Motors) zieht den Eingang auf *low*.
 3. Display, USB-Konsole: `cerbo=<IP des Cerbo>`, `portal=<Portal ID>`, `mqttpass=<Passwort>`.
-4. Display: *Einstellungen > Motorsignal* auf den Eingang stellen. Die Seite zeigt den Zustand der Verbindung, ebenso `status` an der Konsole.
+4. Display: *Einstellungen > Motorsignal* auf den Eingang stellen (oder Konsole `motor=1`). Die Seite zeigt den Zustand der Verbindung, ebenso `status` an der Konsole. `motor=0` schaltet das Motorsignal wieder aus.
 
 Ohne Relais testen: Im Cerbo *Invert* des Eingangs umschalten – das Display muss zwischen „Motor aus“ und „Motor läuft“ wechseln. Auf der Seite Abgastemperatur steht unten „Motor aus: Abgasalarm ruht“ bzw. kurz nach dem Start „Motor gestartet: Schonfrist“.
 
-Der Verbindungsaufbau (TLS-Handshake) blockiert das Display einige Sekunden. Nach einem Fehlschlag wird es erst nach 30 s erneut versucht, danach in wachsenden Abständen bis 5 min.
+Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist 1–3 s, höchstens etwa 12 s. Deshalb beginnt er erst 20 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Zuerst prüft das Display mit kurzer Zeitgrenze (1,5 s), ob Port 8883 erreichbar ist; TLS und MQTT haben eigene Zeitgrenzen. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Die Statuszeile nennt die Stufe, an der es scheitert: *Cerbo nicht erreichbar*, *TLS-Verbindung fehlgeschlagen*, *MQTT-Passwort falsch*.
 
 ## Raymarine-Helligkeit (PGN 126720)
 
