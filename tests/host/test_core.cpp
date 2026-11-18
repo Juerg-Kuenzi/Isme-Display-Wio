@@ -209,12 +209,122 @@ static void testConsole() {
     CHECK(over == 1 && lines == 0);
     feed("status\r", lines, over, last); CHECK(lines == 1 && strcmp(last, "status") == 0);
 
+    char h1[] = "cerbo=192.168.5.20"; CHECK(parseConsoleLine(h1, &arg) == ConsoleCommand::CerboHost);
+    CHECK(!strcmp(arg, "192.168.5.20") && validCerboHost(arg));
+    char h2[] = "portal=c0619ab68636"; CHECK(parseConsoleLine(h2, &arg) == ConsoleCommand::Portal);
+    CHECK(validPortalId(arg));
+    char h3[] = "mqttpass=geheim"; CHECK(parseConsoleLine(h3, &arg) == ConsoleCommand::MqttPassword);
+    CHECK(!strcmp(arg, "geheim") && validMqttPassword(arg));
+    CHECK(!validCerboHost("") && !validCerboHost("192.168 .5.20"));
+    CHECK(!validPortalId("c0619ab6-8636") && !validPortalId(""));
+    CHECK(!validMqttPassword(""));
+    char l1[] = "log=1"; CHECK(parseConsoleLine(l1, &arg) == ConsoleCommand::Log && !strcmp(arg, "1"));
+    char l0[] = " log=0\r"; CHECK(parseConsoleLine(l0, &arg) == ConsoleCommand::Log && !strcmp(arg, "0"));
+    char le[] = "log=ein"; CHECK(parseConsoleLine(le, &arg) == ConsoleCommand::Log && !strcmp(arg, "1"));
+    char la[] = "log=aus"; CHECK(parseConsoleLine(la, &arg) == ConsoleCommand::Log && !strcmp(arg, "0"));
+    char l2[] = "log=2"; CHECK(parseConsoleLine(l2, &arg) == ConsoleCommand::Unknown);
+    char t1[] = "tcptest=192.168.5.12:80"; CHECK(parseConsoleLine(t1, &arg) == ConsoleCommand::TcpTest);
+    char hb[40]; uint16_t hp = 0;
+    CHECK(parseHostPort(arg, hb, sizeof(hb), hp, 8883) && !strcmp(hb, "192.168.5.12") && hp == 80);
+    CHECK(parseHostPort("192.168.5.12", hb, sizeof(hb), hp, 8883) && hp == 8883);
+    CHECK(!parseHostPort("192.168.5.12:", hb, sizeof(hb), hp, 8883) && !parseHostPort(":80", hb, sizeof(hb), hp, 8883));
+    CHECK(!parseHostPort("a:70000", hb, sizeof(hb), hp, 1) && !parseHostPort("a:8x", hb, sizeof(hb), hp, 1));
+    CHECK(!parseHostPort("a:0", hb, sizeof(hb), hp, 1) && !parseHostPort("abcdef", hb, 4, hp, 1));
+    char t2[] = "tcptest2=x"; CHECK(parseConsoleLine(t2, &arg) == ConsoleCommand::TcpTestClassic);
+    char u0[] = "udp=aus"; CHECK(parseConsoleLine(u0, &arg) == ConsoleCommand::Udp && !strcmp(arg, "0"));
+    char m1[] = "motor=0"; CHECK(parseConsoleLine(m1, &arg) == ConsoleCommand::EngineInput);
+    uint8_t in = 9;
+    CHECK(parseEngineInput(arg, in) && in == 0);
+    CHECK(parseEngineInput("4", in) && in == 4);
+    CHECK(parseEngineInput("247", in) && in == 247);
+    CHECK(!parseEngineInput("248", in) && !parseEngineInput("", in) && !parseEngineInput("1x", in) && in == 247);
+
+    // Modbus TCP
+    uint8_t rq[12];
+    modbusReadRequest(rq, 0x1234, 1, MODBUS_REG_DIGITALINPUT_STATE, 1);
+    const uint8_t expRq[12] = {0x12, 0x34, 0, 0, 0, 6, 1, 3, 0x0D, 0x5E, 0, 1};
+    CHECK(memcmp(rq, expRq, 12) == 0);
+    const uint8_t ok[11] = {0x12, 0x34, 0, 0, 0, 5, 1, 3, 2, 0, 3};
+    uint16_t val = 0; uint8_t exc = 0; size_t used = 0;
+    CHECK(parseModbusReadResponse(ok, 5, 0x1234, 1, val, exc, used) == ModbusResult::Incomplete);
+    CHECK(parseModbusReadResponse(ok, 10, 0x1234, 1, val, exc, used) == ModbusResult::Incomplete);
+    CHECK(parseModbusReadResponse(ok, 11, 0x1234, 1, val, exc, used) == ModbusResult::Value && val == 3 && used == 11);
+    CHECK(parseModbusReadResponse(ok, 11, 0x1235, 1, val, exc, used) == ModbusResult::Invalid);
+    CHECK(parseModbusReadResponse(ok, 11, 0x1234, 2, val, exc, used) == ModbusResult::Invalid);
+    const uint8_t ex[9] = {0x12, 0x34, 0, 0, 0, 3, 1, 0x83, 0x0B};
+    CHECK(parseModbusReadResponse(ex, 9, 0x1234, 1, val, exc, used) == ModbusResult::Exception && exc == 0x0B && used == 9);
+    const uint8_t bad[9] = {0x12, 0x34, 0, 1, 0, 3, 1, 0x83, 0x0B};
+    CHECK(parseModbusReadResponse(bad, 9, 0x1234, 1, val, exc, used) == ModbusResult::Invalid);
+    CHECK(engineFromDigitalInputState(3) == EngineState::Running && engineFromDigitalInputState(2) == EngineState::Off);
+    CHECK(engineFromDigitalInputState(1) == EngineState::Running && engineFromDigitalInputState(0) == EngineState::Off);
+    CHECK(engineFromDigitalInputState(10) == EngineState::Running && engineFromDigitalInputState(11) == EngineState::Off);
+    CHECK(engineFromDigitalInputState(8) == EngineState::Unknown && engineFromDigitalInputState(7) == EngineState::Unknown);
+    long v = -1;
+    CHECK(parseVictronInt("{\"value\": 1}", 12, v) && v == 1);
+    CHECK(parseVictronInt("{\"value\":0}", 11, v) && v == 0);
+    CHECK(!parseVictronInt("{\"value\": null}", 15, v));
+    CHECK(!parseVictronInt("", 0, v));
+    CHECK(parseVictronInt("{\"value\": 20.43}", 15, v) && v == 20);
+
     CHECK(!validSsid("")); CHECK(validSsid("a"));
     CHECK(validSsid("12345678901234567890123456789012"));
     CHECK(!validSsid("123456789012345678901234567890123"));
     CHECK(validPassword("")); CHECK(!validPassword("1234567")); CHECK(validPassword("12345678"));
     CHECK(validPassword("1234567890123456789012345678901234567890123456789012345678901234"));
     CHECK(!validPassword("12345678901234567890123456789012345678901234567890123456789012345"));
+}
+
+// Faelle aus dem Betrieb (18.11.2026), Alarmwert 60 C
+static void testEngineGate() {
+    const uint32_t MIN = 60000;
+    ExhaustMonitor ex;
+    EngineGate g;
+    auto step = [&](float c, uint32_t t) {
+        ex.onReading(c, t);
+        g.onReading(c);
+        ex.update(t, 60, g.monitorAllowed(c, t));
+        return ex.alarmActive();
+    };
+    // Ohne Motorsignal (unbekannt): wie bisher, Nachheizen loest Alarm aus
+    CHECK(step(64, 0));
+    CHECK(!step(44.5f, MIN));
+
+    // 1) Kaltstart: 28 -> 44.5, kein Alarm
+    g.onState(EngineState::Off, 0);
+    CHECK(!step(28, 0));
+    g.onState(EngineState::Running, MIN);
+    CHECK(g.inGrace(MIN));
+    for (int i = 0; i <= 40; i++) CHECK(!step(28 + i * 0.4f, MIN + i * 30000));
+    CHECK(!g.inGrace(MIN + 11 * MIN));
+
+    // 2) Motor aus: Nachheizen auf 64 C, kein Alarm
+    g.onState(EngineState::Off, 30 * MIN);
+    for (int i = 0; i <= 40; i++) CHECK(!step(44.5f + i * 0.5f, 30 * MIN + i * MIN));
+
+    // 3) Warmstart bei 64 C: faellt in 3 min auf 44.5, kein Alarm
+    g.onState(EngineState::Running, 80 * MIN);
+    for (int i = 0; i <= 6; i++) CHECK(!step(64 - i * 3.25f, 80 * MIN + i * 30000));
+    CHECK(!step(44.5f, 95 * MIN));
+
+    // Impellerausfall beim Warmstart: steigt statt zu fallen -> Alarm in der Schonfrist
+    g.onState(EngineState::Off, 100 * MIN);
+    CHECK(!step(64, 100 * MIN));
+    g.onState(EngineState::Running, 120 * MIN);
+    CHECK(!step(65, 120 * MIN + 30000));
+    CHECK(step(66.5f, 120 * MIN + 60000));
+
+    // Nach der Schonfrist: normaler Alarm ueber 60 C
+    g.onState(EngineState::Off, 200 * MIN);
+    step(40, 200 * MIN);
+    g.onState(EngineState::Running, 201 * MIN);
+    CHECK(!step(44.5f, 212 * MIN));
+    CHECK(step(61, 213 * MIN));
+    // Motor aus beendet den Alarm sofort
+    g.onState(EngineState::Off, 214 * MIN);
+    CHECK(!step(62, 214 * MIN));
+    // Verbindung verloren -> unbekannt -> wieder wie bisher
+    g.onState(EngineState::Unknown, 215 * MIN);
+    CHECK(step(62, 215 * MIN));
 }
 
 static void testPages() {
@@ -283,6 +393,7 @@ static void testRaymarineBrightness() {
 int main() {
     testWindlass(); testCommands(); testYdRaw(); testExhaust(); testChain(); testClock(); testFormat();
     testConsole(); testBacklight(); testRaymarineBrightness(); testPages();
+    testEngineGate();
     if (failures) { printf("%d Fehler\n", failures); return 1; }
     printf("ALLE TESTS OK\n");
     return 0;

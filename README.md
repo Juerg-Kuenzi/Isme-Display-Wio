@@ -5,8 +5,9 @@ Firmware für das Seeed Wio Terminal als fest eingebaute Anzeige an Bord der Ism
 ## Funktionen
 
 - **Seite Ankerkette:** Kettenlänge, Richtung (Auf oder Ab) und Speisung vom [ChainCounter](https://github.com/Juerg-Kuenzi/ChainCounter). Kommt 3 s lang kein gültiger Satz, wird die Länge abgeblendet und unten erscheint eine Warnung.
-- **Seite NMEA2000:** Abgastemperatur von der YDWG-02 (PGN 130316, ersatzweise 130312, Quelle 14) groß in der Schrift der Kettenlänge, dazu der Alarmwert. Die Uhrzeit hat seit Firmware 1.9.0 eine eigene Seite. 7-Segment-Schrift ist der Uhr vorbehalten, damit Temperatur und Zeit beim flüchtigen Hinschauen nicht verwechselt werden. Kommt 6 s lang keine Temperatur, wird der Wert abgeblendet und unten erscheint eine Warnung.
+- **Seite Abgastemperatur** (bis 1.9.0 „NMEA2000“): Abgastemperatur von der YDWG-02 (PGN 130316, ersatzweise 130312, Quelle 14) groß in der Schrift der Kettenlänge, dazu der Alarmwert. Die Uhrzeit hat seit Firmware 1.9.0 eine eigene Seite. 7-Segment-Schrift ist der Uhr vorbehalten, damit Temperatur und Zeit beim flüchtigen Hinschauen nicht verwechselt werden. Kommt 6 s lang keine Temperatur, wird der Wert abgeblendet und unten erscheint eine Warnung.
 - **Seite Uhrzeit:** die Ortszeit groß in 7-Segment-Schrift (96 Pixel hoch) für die Nachtfahrt. Die Abgastemperatur wird im Hintergrund weiter überwacht: Bei einem Abgasalarm springt die Anzeige zur Seite NMEA2000 und nach dem Alarm wieder zurück zur Uhr, sofern man inzwischen nicht selbst geblättert hat. Warnungen (keine Abgastemperatur, keine Zeit vom GPS) erscheinen unten im Warnbalken, ohne die Seite zu wechseln.
+- **Motorsignal (ab 2.0.0, optional):** Ein nasser Auspuff heizt sich nach dem Abstellen auf die Motorraumtemperatur auf (~64 °C) und würde den Abgasalarm auslösen. Mit dem Signal „Motor läuft“ von einem Digitaleingang des Cerbo GX gilt: *Motor aus* – kein Abgasalarm; *nach dem Start* – 10 Minuten Schonfrist, Alarm nur, wenn die Temperatur mehr als 2 °C über den Wert beim Start steigt (ein Warmstart fällt von ~64 °C, ein Impellerausfall steigt); *danach* – Überwachung wie gewohnt. Ist das Motorsignal ausgeschaltet, fehlt die Verbindung zum Cerbo oder meldet er nichts, überwacht das Display wie ohne Motorsignal. Einrichtung siehe unten.
 - **Ortszeit:** UTC aus PGN 126992 „System Time“ vom GPS, plus die eingestellte Zeitzone (UTC−12 bis UTC+14, ganze Stunden, Standard UTC+0). Zwischen zwei Meldungen läuft die Uhr mit der internen Zeit weiter.
 - **Abgasalarm:** Über dem Alarmwert (Standard 50 °C) erscheint ein Alarmbalken auf jeder Seite, und der Summer gibt alle 2 s vier kurze Töne auf der eingestellten Tonhöhe. Die mittlere Taste schaltet den Ton bis zum nächsten Alarm aus (bis Firmware 1.5.1 die rechte Taste). Der Alarm endet 1 °C unter dem Alarmwert.
 - **Ton testen:** Ein Piezo-Summer ist bei seiner Resonanzfrequenz am lautesten. Unter *Einstellungen > Ton testen* spielt der Alarmton, und mit dem Joystick auf/ab lässt sich die Tonhöhe in Schritten von 100 Hz zwischen 500 und 5000 Hz verstellen (Standard 2700 Hz). Drücken speichert die lauteste Einstellung.
@@ -25,7 +26,7 @@ Die drei Tasten oben sind von links nach rechts C, B und A.
 |---|---|---|
 | überall | Taste Mitte (B) | Alarmton aus |
 | überall | Taste rechts (A) | Tag/Nacht umschalten |
-| Hauptanzeige | Joystick links/rechts | Seiten Ankerkette, NMEA2000, Uhrzeit |
+| Hauptanzeige | Joystick links/rechts | Seiten Ankerkette, Abgastemperatur, Uhrzeit |
 | Hauptanzeige | Taste links (C) | Einstellungen öffnen |
 | Einstellungen | Joystick auf/ab | Eintrag wählen |
 | Einstellungen | Joystick drücken | öffnen |
@@ -54,7 +55,7 @@ Das Display liest die Datensätze `$PXISWND` und sendet Kommandos als `$PXISWNS`
 
 1. **WLAN-Chip aktualisieren:** Das WLAN des Wio Terminal läuft über einen eigenen Chip (RTL8720DN). Er braucht einmalig die aktuelle Firmware von Seeed, die mit dem `ambd_flash_tool` aufgespielt wird. Anleitung: [Wio Terminal Network Overview](https://wiki.seeedstudio.com/Wio-Terminal-Network-Overview/).
 2. **Arduino IDE 2.x:** Unter *Datei > Einstellungen > Zusätzliche Boardverwalter-URLs* `https://files.seeedstudio.com/arduino/package_seeeduino_boards_index.json` eintragen. In der Boardverwaltung „Seeed SAMD Boards“ installieren (gebaut wird mit 1.8.6) und das Board „Seeeduino Wio Terminal“ wählen.
-3. **Bibliotheken:** „Seeed Arduino rpcWiFi“ (installiert die übrigen WLAN-Bibliotheken mit) und „FlashStorage_SAMD“. Die Anzeige-Bibliothek ist im Boardpaket enthalten.
+3. **Bibliotheken:** „Seeed Arduino rpcWiFi“ (installiert die übrigen WLAN-Bibliotheken mit), und „FlashStorage_SAMD“. Die Anzeige-Bibliothek ist im Boardpaket enthalten.
 4. **Hochladen:** `firmware/IsmeDisplay/IsmeDisplay.ino` öffnen und hochladen.
 5. **Zugangsdaten** über die USB-Konsole setzen (siehe unten).
 
@@ -88,6 +89,11 @@ status
 | `status` | Firmware, SSID, ob ein Passwort gesetzt ist (es wird nie angezeigt), WLAN-Verbindung, Tag/Nacht mit Nachtstufe, Displaygruppe mit zuletzt gemeldeter Stufe, Ports |
 | `ssid=<name>` | SSID setzen (1–32 Zeichen), speichern, neu verbinden. Meldet sofort „wird gespeichert …“, dann „gespeichert“ und „Verbinde neu …“, danach „WLAN verbunden, IP …“ oder nach 30 s einen Hinweis, falls keine Verbindung zustande kommt |
 | `pass=<pw>` | Passwort setzen (leer = offenes Netz, sonst 8–64 Zeichen), speichern, neu verbinden, Meldungen wie bei `ssid=` |
+| `cerbo=<ip>` | Adresse des Cerbo GX für das Motorsignal |
+| `motor=<n>` | Motorsignal: `0` aus, sonst Geräte-ID (Modbus Unit-ID) des Digitaleingangs |
+| `tcptest=<ip>[:port]` | Fehlersuche: TCP-Verbindung testen (Standard Port 502) |
+| `udp=aus` / `udp=ein` | Fehlersuche: UDP-Empfang anhalten, nur bis zum Neustart |
+| `log=ein` / `log=aus` | Protokoll für die Fehlersuche: jede Sekunde ein Lebenszeichen, jeder Schritt der Cerbo-Verbindung mit Dauer, Tasten, langsame Abschnitte der Hauptschleife. Nur bis zum nächsten Neustart. |
 | `help` | Befehlsliste |
 
 Hinweise zum Terminalprogramm:
@@ -113,7 +119,8 @@ firmware/IsmeDisplay/
   app.cpp              Anzeige, Tasten, WLAN/UDP, Summer, Einstellungen im Flash
   core.h, core.cpp     Kernlogik ohne Arduino: NMEA, YDWG-02-RAW, Temperatur-PGNs,
                        Raymarine-Helligkeit, Duplikatfilter, Abgasalarm, Datenausfall,
-                       Formatierung, Konsole
+                       Formatierung, Konsole, Motorsignal (EngineGate), Seiten
+  cerbo.h, cerbo.cpp   Motorsignal vom Cerbo GX über Modbus TCP
   config.h             Version, Standardwerte, Zeiten
   secrets.h.example    optionale Startwerte für die WLAN-Zugangsdaten
 tests/host/            PC-Tests der Kernlogik (g++), mit denselben Testdaten wie die App
@@ -123,6 +130,27 @@ tools/log_n2k_raw.py   Aufnahme der YDWG-02-RAW-Daten mit Markierungen (PC, Pyth
 ```
 make -C tests/host
 ```
+
+## Motorsignal vom Cerbo GX
+
+Das Display liest den Zustand eines Digitaleingangs des Cerbo GX über **Modbus TCP** im lokalen Netz: Port 502, Register 3422 (`/State` von `com.victronenergy.digitalinput`), Unit-ID = Geräte-ID des Eingangs. Jede Sekunde eine Abfrage über eine offen gehaltene Verbindung.
+
+Warum nicht MQTT: Mit den Sicherheitsprofilen *Secured* und *Weak* verlangt der Cerbo für MQTT TLS. Der TLS-Client des WLAN-Chips im Wio (RTL8720DN) scheitert am Handshake mit dem Cerbo (Abbruch durch den Cerbo, Windows handelt ECDHE/X25519 mit AES-256-GCM aus). Unverschlüsseltes MQTT gibt es nur im Profil *Unsecured*, dann aber ohne jedes Passwort für den ganzen Cerbo.
+
+Einrichtung:
+
+1. Cerbo: *Einstellungen > Integrationen > Digitale E/A*: den Eingang auf **Bilgepumpe** stellen (der Typ *Generic I/O* steht im Menü nicht zur Wahl), Alarm aus, Name z. B. „Motor“, **Invertieren ein**. Der offene Eingang liegt auf *high* (= *ein*); ein geschlossener Kontakt, z. B. ein Relais an „Zündung ein“, zieht ihn auf *low*. Mit *Invertieren* gilt deshalb: Kontakt offen = Motor aus, Kontakt geschlossen = Motor läuft. So zeigt das Display auch ohne angeschlossenes Relais „Motor aus“. **Nicht „Generator“** wählen: dieser Typ meldet dem Multi/Quattro einen Generator am AC-Eingang und steuert die Generator-Start/Stopp-Logik.
+2. Cerbo: *Einstellungen > Integrationen > Modbus TCP* einschalten. Unter *Verfügbare Dienste* steht der Eingang mit seiner Geräte-ID, z. B. „Motor – com.victronenergy.digitalinput | Geräte-ID: 1“. Kontrolle vom PC: `Test-NetConnection <IP des Cerbo> -Port 502`.
+3. Display, USB-Konsole: `cerbo=<IP des Cerbo>`.
+4. Display: *Einstellungen > Motorsignal* auf die Geräte-ID stellen (oder Konsole `motor=1`). Die Seite zeigt den Zustand der Verbindung, ebenso `status` an der Konsole. `motor=0` schaltet das Motorsignal aus.
+
+Verstanden werden die Zustände low/high (Generic I/O), aus/ein (Bilgepumpe), nein/ja und läuft/gestoppt (Generator); Alarmtypen ergeben „Typ des Eingangs passt nicht“.
+
+Hinweis Sicherheit: Modbus TCP hat kein Passwort. Jedes Gerät im selben Netz kann Werte lesen und einige Einstellungen schreiben (z. B. ESS-Sollwerte). Das Sicherheitsprofil für Weboberfläche und MQTT bleibt davon unberührt.
+
+Ohne Relais testen: Im Cerbo *Invertieren* des Eingangs vorübergehend ausschalten – das Display muss zwischen „Motor aus“ und „Motor läuft“ wechseln. Auf der Seite Abgastemperatur steht unten „Motor aus: Abgasalarm ruht“ bzw. kurz nach dem Start „Motor gestartet: Schonfrist“.
+
+Der Verbindungsaufbau läuft über den WLAN-Chip und hält das Display dabei an (Tasten, Anzeige, Konsole), meist unter 1 s. Ist der Cerbo ausgeschaltet oder nicht im Netz, bis etwa 30 s, denn der WLAN-Chip kennt dafür keine Zeitgrenze (ein eigener nicht-blockierender Aufbau führte zu Abstürzen). Deshalb beginnt er erst 20 s nach der WLAN-Verbindung oder einer Änderung und nur, wenn die Hauptseite angezeigt wird und seit 10 s keine Taste gedrückt wurde. Nach einem Fehlschlag folgt der nächste Versuch nach 30 s, danach in wachsenden Abständen bis 5 min. Fehlersuche: Konsole `log=ein`.
 
 ## Raymarine-Helligkeit (PGN 126720)
 

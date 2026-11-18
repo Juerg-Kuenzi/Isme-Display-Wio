@@ -274,8 +274,9 @@ void ExhaustMonitor::onReading(float c, uint32_t now) {
 
 bool ExhaustMonitor::isFresh(uint32_t now) const { return has_ && now - lastAt_ < STALE_AFTER_MS; }
 
-void ExhaustMonitor::update(uint32_t now, float limit) {
-    bool active = has_ && isFresh(now) && (celsius_ > limit || (alarm_ && celsius_ > limit - 1.0f));
+void ExhaustMonitor::update(uint32_t now, float limit, bool allowed) {
+    bool active = allowed && has_ && isFresh(now) &&
+                  (celsius_ > limit || (alarm_ && celsius_ > limit - 1.0f));
     if (!active) muted_ = false;
     alarm_ = active;
 }
@@ -334,6 +335,44 @@ void formatFactor(char* out, size_t size, long v) {
     while (n > 0 && digits[n - 1] == '0') n--;
     digits[n] = 0;
     snprintf(out, size, "%ld.%s", whole, digits);
+}
+
+// ---------- Motorsignal ----------
+
+void EngineGate::onState(EngineState s, uint32_t now) {
+    if (s == EngineState::Running && state_ == EngineState::Off) {
+        // Start erkannt: Schonfrist ab der aktuellen Temperatur
+        grace_ = true;
+        startAt_ = now;
+        startKnown_ = hasLast_;
+        startCelsius_ = lastCelsius_;
+    }
+    if (s != EngineState::Running) grace_ = false;
+    state_ = s;
+}
+
+void EngineGate::onReading(float celsius) {
+    lastCelsius_ = celsius;
+    hasLast_ = true;
+    if (grace_ && !startKnown_) {
+        startKnown_ = true;
+        startCelsius_ = celsius;
+    }
+}
+
+bool EngineGate::inGrace(uint32_t now) const {
+    return state_ == EngineState::Running && grace_ && now - startAt_ < GRACE_MS;
+}
+
+bool EngineGate::monitorAllowed(float celsius, uint32_t now) const {
+    switch (state_) {
+        case EngineState::Unknown: return true;
+        case EngineState::Off: return false;
+        case EngineState::Running:
+            if (inGrace(now)) return startKnown_ && celsius > startCelsius_ + GRACE_RISE;
+            return true;
+    }
+    return true;
 }
 
 // ---------- Seiten der Hauptanzeige ----------
@@ -434,6 +473,16 @@ ConsoleCommand parseConsoleLine(char* line, const char** arg) {
     if (strcmp(s, "status") == 0) return ConsoleCommand::Status;
     if (strncmp(s, "ssid=", 5) == 0) { *arg = s + 5; return ConsoleCommand::Ssid; }
     if (strncmp(s, "pass=", 5) == 0) { *arg = s + 5; return ConsoleCommand::Password; }
+    if (strncmp(s, "cerbo=", 6) == 0) { *arg = s + 6; return ConsoleCommand::CerboHost; }
+    if (strncmp(s, "portal=", 7) == 0) { *arg = s + 7; return ConsoleCommand::Portal; }
+    if (strncmp(s, "mqttpass=", 9) == 0) { *arg = s + 9; return ConsoleCommand::MqttPassword; }
+    if (!strcmp(s, "log=ein") || !strcmp(s, "log=1")) { *arg = "1"; return ConsoleCommand::Log; }
+    if (!strcmp(s, "log=aus") || !strcmp(s, "log=0")) { *arg = "0"; return ConsoleCommand::Log; }
+    if (strncmp(s, "tcptest=", 8) == 0) { *arg = s + 8; return ConsoleCommand::TcpTest; }
+    if (strncmp(s, "tcptest2=", 9) == 0) { *arg = s + 9; return ConsoleCommand::TcpTestClassic; }
+    if (!strcmp(s, "udp=ein")) { *arg = "1"; return ConsoleCommand::Udp; }
+    if (!strcmp(s, "udp=aus")) { *arg = "0"; return ConsoleCommand::Udp; }
+    if (strncmp(s, "motor=", 6) == 0) { *arg = s + 6; return ConsoleCommand::EngineInput; }
     return ConsoleCommand::Unknown;
 }
 
@@ -466,6 +515,118 @@ ConsoleLineReader::Event ConsoleLineReader::feed(char c) {
 bool validSsid(const char* s) {
     size_t n = strlen(s);
     return n >= 1 && n <= SSID_MAX;
+}
+
+bool validCerboHost(const char* s) {
+    size_t n = strlen(s);
+    if (n < 1 || n > CERBO_HOST_MAX) return false;
+    for (const char* p = s; *p; p++)
+        if (*p == ' ' || static_cast<unsigned char>(*p) < 0x21) return false;
+    return true;
+}
+
+bool validPortalId(const char* s) {
+    size_t n = strlen(s);
+    if (n < 1 || n > PORTAL_ID_MAX) return false;
+    for (const char* p = s; *p; p++)
+        if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z'))) return false;
+    return true;
+}
+
+bool validMqttPassword(const char* s) {
+    size_t n = strlen(s);
+    return n >= 1 && n <= MQTT_PASSWORD_MAX;
+}
+
+bool parseEngineInput(const char* s, uint8_t& input) {
+    if (!*s || strlen(s) > 3) return false;
+    unsigned v = 0;
+    for (const char* p = s; *p; p++) {
+        if (*p < '0' || *p > '9') return false;
+        v = v * 10 + static_cast<unsigned>(*p - '0');
+    }
+    if (v > 247) return false;
+    input = static_cast<uint8_t>(v);
+    return true;
+}
+
+bool parseHostPort(const char* s, char* host, size_t hostSize, uint16_t& port, uint16_t defaultPort) {
+    const char* colon = strchr(s, ':');
+    size_t n = colon ? static_cast<size_t>(colon - s) : strlen(s);
+    if (n < 1 || n >= hostSize) return false;
+    for (size_t i = 0; i < n; i++)
+        if (static_cast<unsigned char>(s[i]) < 0x21) return false;
+    unsigned long p = defaultPort;
+    if (colon) {
+        const char* d = colon + 1;
+        if (!*d) return false;
+        p = 0;
+        for (; *d; d++) {
+            if (*d < '0' || *d > '9') return false;
+            p = p * 10 + static_cast<unsigned long>(*d - '0');
+            if (p > 65535) return false;
+        }
+        if (p == 0) return false;
+    }
+    memcpy(host, s, n);
+    host[n] = 0;
+    port = static_cast<uint16_t>(p);
+    return true;
+}
+
+void modbusReadRequest(uint8_t out[12], uint16_t transaction, uint8_t unit, uint16_t reg, uint16_t count) {
+    out[0] = transaction >> 8; out[1] = transaction & 0xFF;
+    out[2] = 0; out[3] = 0;          // Protokoll 0 = Modbus
+    out[4] = 0; out[5] = 6;          // folgende Bytes
+    out[6] = unit;
+    out[7] = 3;                      // Holding-Register lesen
+    out[8] = reg >> 8; out[9] = reg & 0xFF;
+    out[10] = count >> 8; out[11] = count & 0xFF;
+}
+
+ModbusResult parseModbusReadResponse(const uint8_t* buf, size_t len, uint16_t transaction, uint8_t unit,
+                                     uint16_t& value, uint8_t& exceptionCode, size_t& consumed) {
+    if (len < 6) return ModbusResult::Incomplete;
+    size_t follow = (static_cast<size_t>(buf[4]) << 8) | buf[5];
+    if (buf[2] != 0 || buf[3] != 0 || follow < 3 || follow > 253) return ModbusResult::Invalid;
+    if (len < 6 + follow) return ModbusResult::Incomplete;
+    consumed = 6 + follow;
+    uint16_t tid = (static_cast<uint16_t>(buf[0]) << 8) | buf[1];
+    if (tid != transaction || buf[6] != unit) return ModbusResult::Invalid;
+    if (buf[7] == (3 | 0x80)) {
+        exceptionCode = buf[8];
+        return ModbusResult::Exception;
+    }
+    if (buf[7] != 3 || follow != 5 || buf[8] != 2) return ModbusResult::Invalid;
+    value = (static_cast<uint16_t>(buf[9]) << 8) | buf[10];
+    return ModbusResult::Value;
+}
+
+EngineState engineFromDigitalInputState(long state) {
+    switch (state) {
+        case 1: case 3: case 5: case 10: return EngineState::Running;
+        case 0: case 2: case 4: case 11: return EngineState::Off;
+        default: return EngineState::Unknown;
+    }
+}
+
+bool parseVictronInt(const char* payload, size_t length, long& value) {
+    char buf[64];
+    if (length == 0 || length >= sizeof(buf)) return false;
+    memcpy(buf, payload, length);
+    buf[length] = 0;
+    const char* p = strstr(buf, "\"value\"");
+    if (!p) return false;
+    p = strchr(p + 7, ':');
+    if (!p) return false;
+    p++;
+    while (*p == ' ') p++;
+    if (*p == 'n') return false;   // null
+    char* end;
+    double v = strtod(p, &end);
+    if (end == p) return false;
+    value = static_cast<long>(v);
+    return true;
 }
 
 bool validPassword(const char* s) {

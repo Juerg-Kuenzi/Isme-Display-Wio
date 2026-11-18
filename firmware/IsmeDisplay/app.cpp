@@ -3,17 +3,21 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include <rpcWiFi.h>
+#include "erpc/rpc_system.h"
+#include "erpc/erpc_port.h"
 #include <WiFiUdp.h>
 // Darf nur in einer Datei eingebunden werden. Verwendet wird nur
 // FlashStorageClass mit fester Adresse (siehe Einstellungen im Flash).
 #include <FlashStorage_SAMD.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "app.h"
 #include "config.h"
 #include "core.h"
+#include "cerbo.h"
 
 // Die WLAN-Zugangsdaten werden ueber die USB-Konsole gesetzt und im Flash
 // gespeichert (ab Firmware 1.5.0). secrets.h ist nur noch optional: Falls
@@ -61,7 +65,8 @@ WiFiUDP n2kUdp;
 // ---------------------------------------------------------------------------
 const uint32_t SETTINGS_MAGIC_V3 = 0x15E00003;   // Firmware 1.5.x, ohne Nachtstufe
 const uint32_t SETTINGS_MAGIC_V4 = 0x15E00004;   // Firmware 1.6.x, ohne Displaygruppe
-const uint32_t SETTINGS_MAGIC = 0x15E00005;
+const uint32_t SETTINGS_MAGIC_V5 = 0x15E00005;   // Firmware 1.7.x-1.9.x, ohne Motorsignal
+const uint32_t SETTINGS_MAGIC = 0x15E00006;
 const uint8_t DEFAULT_HELM_GROUP = 1;            // Raymarine "Helm 1" = Bruecke
 const uint32_t SETTINGS_FLASH_ADDR = 0x7E000;   // letzter Loeschblock (8 KB)
 
@@ -77,9 +82,18 @@ struct Settings {
     char password[PASSWORD_MAX + 1];   // nullterminiert, leer = offenes Netz
     uint8_t nightLevel;                // ab 1.6.0: Helligkeit in der Nacht, Stufe 1 bis 10
     uint8_t helmGroup;                 // ab 1.7.0: nachts der Helligkeit dieser Raymarine-Gruppe folgen, 0 = aus
+    // ab 2.0.0: Motorsignal vom Cerbo GX (Modbus TCP)
+    uint8_t engineInput;               // 0 = aus, sonst Geraete-ID (Modbus Unit-ID) des Digitaleingangs
+    char cerboHost[CERBO_HOST_MAX + 1];
+    char portalId[PORTAL_ID_MAX + 1];           // nicht mehr benutzt (war MQTT), wird geloescht
+    char mqttPassword[MQTT_PASSWORD_MAX + 1];   // nicht mehr benutzt (war MQTT), wird geloescht
 };
 
 Settings settings;
+void defaultEngineSettings() {
+    settings.engineInput = 0;
+    settings.cerboHost[0] = settings.portalId[0] = settings.mqttPassword[0] = 0;
+}
 FlashStorageClass<Settings> settingsStore(reinterpret_cast<const void*>(SETTINGS_FLASH_ADDR));
 
 void saveSettings() {
@@ -95,8 +109,13 @@ void loadSettings() {
     }
     if (settings.magic == SETTINGS_MAGIC_V4) {
         // Update von 1.6.x: alle Einstellungen bleiben, neu ist nur die Displaygruppe
-        settings.magic = SETTINGS_MAGIC;
+        settings.magic = SETTINGS_MAGIC_V5;
         settings.helmGroup = DEFAULT_HELM_GROUP;
+    }
+    if (settings.magic == SETTINGS_MAGIC_V5) {
+        // Update von 1.7.x bis 1.9.x: neu ist nur das Motorsignal, standardmaessig aus
+        settings.magic = SETTINGS_MAGIC;
+        defaultEngineSettings();
         saveSettings();
     }
     if (settings.magic != SETTINGS_MAGIC) {
@@ -114,6 +133,7 @@ void loadSettings() {
         snprintf(settings.password, sizeof(settings.password), "%s", WIFI_PASSWORD);
         settings.nightLevel = NIGHT_LEVEL_DEFAULT;
         settings.helmGroup = DEFAULT_HELM_GROUP;
+        defaultEngineSettings();
         saveSettings();
     }
     if (settings.nightLevel < NIGHT_LEVEL_MIN || settings.nightLevel > NIGHT_LEVEL_MAX)
@@ -123,6 +143,15 @@ void loadSettings() {
     if (settings.toneHz < TONE_MIN_HZ || settings.toneHz > TONE_MAX_HZ) settings.toneHz = TONE_DEFAULT_HZ;
     settings.ssid[sizeof(settings.ssid) - 1] = 0;
     settings.password[sizeof(settings.password) - 1] = 0;
+    if (settings.engineInput > 247) settings.engineInput = 0;
+    settings.cerboHost[sizeof(settings.cerboHost) - 1] = 0;
+    // Vorabversionen 2.0.0-2.0.6 (MQTT) speicherten Portal ID und MQTT-Passwort:
+    // nicht mehr gebraucht, das Passwort soll nicht im Flash bleiben
+    if (settings.portalId[0] || settings.mqttPassword[0]) {
+        memset(settings.portalId, 0, sizeof(settings.portalId));
+        memset(settings.mqttPassword, 0, sizeof(settings.mqttPassword));
+        saveSettings();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -354,12 +383,12 @@ void invalidateRegions() {
 enum class UiScreen { Main, Menu, Detail, Info };
 
 enum Item {
-    ITEM_NIGHT, ITEM_HELM, ITEM_ZERO, ITEM_LENGTH, ITEM_PORT, ITEM_DEBOUNCE, ITEM_FACTOR, ITEM_RESTART,
+    ITEM_NIGHT, ITEM_HELM, ITEM_ENGINE, ITEM_ZERO, ITEM_LENGTH, ITEM_PORT, ITEM_DEBOUNCE, ITEM_FACTOR, ITEM_RESTART,
     ITEM_N2K_PORT, ITEM_ALARM, ITEM_TONE, ITEM_TIMEZONE, ITEM_INFO, ITEM_COUNT
 };
 
 const char* const ITEM_LABELS[ITEM_COUNT] = {
-    "Nachthelligkeit", "Helligkeit folgt", "Zähler nullen", "Länge setzen", "Port ChainCounter", "Entprellzeit",
+    "Nachthelligkeit", "Helligkeit folgt", "Motorsignal", "Zähler nullen", "Länge setzen", "Port ChainCounter", "Entprellzeit",
     "Umrechnungsfaktor", "Restart", "Port NMEA2000", "Alarmwert Abgas", "Ton testen",
     "Zeitzone", "Informationen",
 };
@@ -367,6 +396,7 @@ const char* const ITEM_LABELS[ITEM_COUNT] = {
 const char* const ITEM_TEXT[ITEM_COUNT] = {
     "Helligkeit bei Nacht. Die rechte Taste schaltet zwischen Tag (hell) und Nacht (rot, diese Stufe) um.",
     "Nachts übernimmt das Display die Helligkeitsstufe dieser Raymarine-Displaygruppe, sobald sie dort verstellt wird.",
+    "Digitaleingang des Cerbo (Typ Generic I/O, high = Motor läuft). Motor aus: kein Abgasalarm. Zugang über die USB-Konsole.",
     "Setzt den Kettenzähler auf 0. Das Gerät speichert den Wert spätestens nach 15 Minuten.",
     "Setzt die Kettenlänge in ganzen Metern. Das Gerät speichert den Wert spätestens nach 15 Minuten.",
     "Port, auf dem der ChainCounter sendet. Am Gerät wird er an der Konsole mit port= eingestellt.",
@@ -388,6 +418,8 @@ uint16_t testToneHz = TONE_DEFAULT_HZ;   // Tonhoehe auf der Seite "Ton testen"
 int testUtcOffset = 0;                   // Zeitzone auf der Seite "Zeitzone"
 int testNightLevel = NIGHT_LEVEL_DEFAULT;   // Stufe auf der Seite "Nachthelligkeit"
 int testHelmGroup = DEFAULT_HELM_GROUP;     // Gruppe auf der Seite "Helligkeit folgt"
+int testEngineInput = 0;                    // Eingang auf der Seite "Motorsignal"
+EngineGate engineGate;                      // Motor laeuft / aus / unbekannt, Schonfrist
 
 // Zuletzt von der Raymarine-Gruppe gemeldete Stufe, 0 = noch keine Meldung.
 // Die Instrumente senden nur bei einer Aenderung; bis dahin gilt die eigene
@@ -413,6 +445,7 @@ bool bridgeKnown = false;
 
 bool wifiConnected = false;
 bool udpOpen = false;
+bool udpBlocked = false;   // Konsole udp=aus (Fehlersuche)
 uint32_t wifiStartedAt = 0;
 
 char messages[ITEM_COUNT][72];
@@ -454,7 +487,7 @@ bool itemHasEditor(Item item) {
 // Einstellungen, die nur das Display betreffen und nichts ans Geraet senden
 bool itemIsLocal(Item item) {
     return item == ITEM_PORT || item == ITEM_N2K_PORT || item == ITEM_ALARM || item == ITEM_TONE ||
-           item == ITEM_TIMEZONE || item == ITEM_NIGHT || item == ITEM_HELM;
+           item == ITEM_TIMEZONE || item == ITEM_NIGHT || item == ITEM_HELM || item == ITEM_ENGINE;
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +531,7 @@ void serviceWifi(uint32_t now) {
             consoleWifiReport = false;
         }
     }
-    if (connected && !udpOpen) openUdp();
+    if (connected && !udpOpen && !udpBlocked) openUdp();
     if (!connected) {
         if (udpOpen) {
             chainUdp.stop();
@@ -537,7 +570,10 @@ void handleN2kPacket(const char* text, int len, IPAddress sender, uint32_t now) 
             if (parseYdRawLine(text + start, i - start, frame)) {
                 uint32_t days, tenthMillis;
                 uint8_t percent;
-                if (exhaustSelector.onFrame(frame, now, celsius)) exhaust.onReading(celsius, now);
+                if (exhaustSelector.onFrame(frame, now, celsius)) {
+                    exhaust.onReading(celsius, now);
+                    engineGate.onReading(celsius);
+                }
                 else if (helmBrightness.onFrame(frame, settings.helmGroup, percent)) {
                     helmLevel = raymarineLevel(percent);
                     applyDisplayMode();   // wirkt sofort, die Anzeige folgt beim naechsten Zeichnen
@@ -773,8 +809,7 @@ void renderN2kPage(uint32_t now) {
     // Schrift der Kettenlaenge, damit sie nicht mit der 7-Segment-Uhr verwechselt wird.
     const int VALUE_Y = 84, VALUE_H = 75;
     if (fullRedraw) {
-        titleBar("NMEA2000", true);
-        drawText("Abgastemperatur", 8, 38, 2, pal.muted, pal.bg, ALIGN_LEFT);
+        titleBar("Abgastemperatur", true);
         drawText("°C", 268, VALUE_Y + VALUE_H - 26, 4, pal.ink, pal.bg, ALIGN_LEFT);
         tft.drawFastHLine(0, 188, 320, pal.rule);
     }
@@ -801,6 +836,19 @@ void renderN2kPage(uint32_t now) {
     } else if (n2kWarning(now, w, sizeof(w))) {
         snprintf(l1, sizeof(l1), "%s", w);
         warning = true;
+    } else if (settings.engineInput) {
+        // Motorsignal: ruhiger Hinweis ohne Warnbalken, ausser es fehlt
+        switch (engineGate.state()) {
+            case EngineState::Off: snprintf(l1, sizeof(l1), "Motor aus: Abgasalarm ruht"); break;
+            case EngineState::Running:
+                if (engineGate.inGrace(now)) snprintf(l1, sizeof(l1), "Motor gestartet: Schonfrist");
+                break;
+            case EngineState::Unknown:
+                snprintf(l1, sizeof(l1), "Kein Motorsignal vom Cerbo:");
+                snprintf(l2, sizeof(l2), "Abgasalarm wie ohne Motorsignal");
+                warning = true;
+                break;
+        }
     }
     snprintf(sig, sizeof(sig), "%s|%s|%d", l1, l2, warning);
     if (changed(R_BOTTOM, sig)) {
@@ -809,6 +857,8 @@ void renderN2kPage(uint32_t now) {
             tft.fillRect(0, 192, 320, 48, pal.warning);
             drawText(l1, 8, 196, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
             if (l2[0]) drawText(l2, 8, 216, 2, pal.onWarning, pal.warning, ALIGN_LEFT);
+        } else if (l1[0]) {
+            drawText(l1, 8, 206, 2, pal.muted, pal.bg, ALIGN_LEFT);
         }
     }
 }
@@ -903,6 +953,10 @@ void renderMenu() {
             else snprintf(value, sizeof(value), "Stufe %u", settings.nightLevel);
         }
         if (i == ITEM_HELM) snprintf(value, sizeof(value), "%s", helmGroupName(settings.helmGroup));
+        if (i == ITEM_ENGINE) {
+            if (settings.engineInput) snprintf(value, sizeof(value), "ID %u", settings.engineInput);
+            else snprintf(value, sizeof(value), "Aus");
+        }
         if (i == ITEM_TONE) snprintf(value, sizeof(value), "%u Hz", settings.toneHz);
         if (i == ITEM_TIMEZONE) formatUtcOffset(value, sizeof(value), settings.utcOffset);
         char sig[64];
@@ -1038,6 +1092,18 @@ void renderDetail(uint32_t now) {
             int w = drawText(helmGroupName(testHelmGroup), 8, 114, 4, pal.ink, pal.bg, ALIGN_LEFT);
             if (state[0]) drawText(state, 8 + w + 16, 120, 2, pal.muted, pal.bg, ALIGN_LEFT);
         }
+    } else if (item == ITEM_ENGINE) {
+        char state[64] = "";
+        if (testEngineInput == settings.engineInput && settings.engineInput) cerbo::status(state, sizeof(state));
+        char name[16];
+        if (testEngineInput) snprintf(name, sizeof(name), "Geraete-ID %d", testEngineInput);
+        else snprintf(name, sizeof(name), "Aus");
+        snprintf(sig, sizeof(sig), "%s|%s", name, state);
+        if (changed(R_EDITOR, sig)) {
+            tft.fillRect(0, 112, 320, 36, pal.bg);
+            drawText(name, 8, 112, 4, pal.ink, pal.bg, ALIGN_LEFT);
+            if (state[0]) drawText(state, 8, 136, 1, pal.muted, pal.bg, ALIGN_LEFT);
+        }
     } else if (changed(R_EDITOR, "action")) {
         tft.fillRect(0, 112, 320, 36, pal.bg);
     }
@@ -1069,6 +1135,7 @@ void renderDetail(uint32_t now) {
     else if (item == ITEM_TIMEZONE) footer("Auf/ab: Zeitzone   Drücken: speichern");
     else if (item == ITEM_NIGHT) footer("Auf/ab: Stufe   Drücken: speichern");
     else if (item == ITEM_HELM) footer("Auf/ab: Gruppe   Drücken: speichern");
+    else if (item == ITEM_ENGINE) footer("Auf/ab: Geräte-ID   Drücken: speichern");
     else footer(itemIsLocal(item) ? "Drücken: speichern   Taste links: zurück" : "Drücken: senden   Taste links: zurück");
 }
 
@@ -1110,6 +1177,8 @@ KeyState keys[K_COUNT] = {
     {WIO_5S_RIGHT, true, false, 0, 0}, {WIO_5S_PRESS, false, false, 0, 0}, {KEY_MENU, false, false, 0, 0},
     {KEY_MUTE, false, false, 0, 0},    {KEY_NIGHT, false, false, 0, 0},
 };
+
+uint32_t lastKeyAt = 0;
 
 int pollKeys(uint32_t now) {
     for (int i = 0; i < K_COUNT; i++) {
@@ -1190,6 +1259,7 @@ void openDetail(Item item) {
         case ITEM_TIMEZONE: testUtcOffset = settings.utcOffset; break;
         case ITEM_NIGHT: testNightLevel = helmLevel && settings.helmGroup ? helmLevel : settings.nightLevel; break;
         case ITEM_HELM: testHelmGroup = settings.helmGroup; break;
+        case ITEM_ENGINE: testEngineInput = settings.engineInput; break;
         default: break;
     }
     show(UiScreen::Detail);
@@ -1279,6 +1349,15 @@ void submitDetail() {
             else
                 snprintf(messages[detailItem], sizeof(messages[0]), "Folgt nachts %s.", helmGroupName(settings.helmGroup));
             break;
+        case ITEM_ENGINE:
+            settings.engineInput = static_cast<uint8_t>(testEngineInput);
+            saveSettings();
+            cerbo::reset();
+            if (settings.engineInput)
+                snprintf(messages[detailItem], sizeof(messages[0]), "Motorsignal von Geraete-ID %u.", settings.engineInput);
+            else
+                snprintf(messages[detailItem], sizeof(messages[0]), "Motorsignal aus.");
+            break;
         case ITEM_TIMEZONE: {
             settings.utcOffset = static_cast<int8_t>(testUtcOffset);
             saveSettings();
@@ -1338,6 +1417,13 @@ void handleKey(int key) {
                 if (key == K_LEFT) show(UiScreen::Menu);
                 break;
             }
+            if (detailItem == ITEM_ENGINE) {
+                if (key == K_UP && testEngineInput < 247) testEngineInput++;
+                if (key == K_DOWN && testEngineInput > 0) testEngineInput--;
+                if (key == K_UP || key == K_DOWN) messages[ITEM_ENGINE][0] = 0;
+                if (key == K_LEFT) show(UiScreen::Menu);
+                break;
+            }
             if (detailItem == ITEM_HELM) {
                 if (key == K_UP && testHelmGroup < HELM_GROUP_MAX) testHelmGroup++;
                 if (key == K_DOWN && testHelmGroup > HELM_GROUP_OFF) testHelmGroup--;
@@ -1374,6 +1460,26 @@ bool renderNeeded = true;
 // USB-Konsole, 115200 Baud: WLAN-Zugangsdaten setzen und Zustand anzeigen
 // ---------------------------------------------------------------------------
 void consolePrint(const char* text) { Serial.println(text); }
+
+// Protokoll (log=ein): nur im RAM, nach einem Neustart wieder aus. Jede Zeile wird
+// sofort gesendet, damit bei einem Haenger die letzte Zeile zeigt, wo es steht.
+bool logOn = false;
+void logLine(const char* text) {
+    Serial.println(text);
+    Serial.flush();
+}
+void applog(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void applog(const char* fmt, ...) {
+    if (!logOn) return;
+    char text[120];
+    uint32_t ms = millis();
+    int n = snprintf(text, sizeof(text), "[%lu.%03lu] ", static_cast<unsigned long>(ms / 1000), static_cast<unsigned long>(ms % 1000));
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(text + n, sizeof(text) - n, fmt, ap);
+    va_end(ap);
+    logLine(text);
+}
 
 // Sofort anzeigen, bevor Speichern und Neuverbinden das Programm kurz aufhalten
 void consolePrintNow(const char* text) {
@@ -1417,15 +1523,34 @@ void consoleStatus() {
     else if (helmLevel) snprintf(line, sizeof(line), "Helligkeit folgt: %s, zuletzt Stufe %d", helmGroupName(settings.helmGroup), helmLevel);
     else snprintf(line, sizeof(line), "Helligkeit folgt: %s, noch keine Meldung", helmGroupName(settings.helmGroup));
     consolePrint(line);
+    char st[64];
+    cerbo::status(st, sizeof(st));
+    if (settings.engineInput) snprintf(line, sizeof(line), "Motorsignal    : Geraete-ID %u, %s", settings.engineInput, st);
+    else snprintf(line, sizeof(line), "Motorsignal    : aus");
+    consolePrint(line);
+    snprintf(line, sizeof(line), "Cerbo          : %s (Modbus TCP, Port 502)",
+             settings.cerboHost[0] ? settings.cerboHost : "(nicht gesetzt)");
+    consolePrint(line);
     snprintf(line, sizeof(line), "Port ChainCounter: %u, Port NMEA2000: %u",
              static_cast<unsigned>(settings.chainPort), static_cast<unsigned>(settings.n2kPort));
+    consolePrint(line);
+    // Firmware des WLAN-Chips (RTL8720DN). Zuletzt, falls die Abfrage haengt.
+    static char rtlVersion[16] = "";
+    if (!rtlVersion[0]) {
+        consolePrintNow("WLAN-Chip FW   : (Abfrage ...)");
+        char* v = rpc_system_version();
+        snprintf(rtlVersion, sizeof(rtlVersion), "%s", v ? v : "?");
+        if (v) erpc_free(v);
+    }
+    snprintf(line, sizeof(line), "WLAN-Chip FW   : %s (benoetigt 2.1.3 oder neuer)", rtlVersion);
     consolePrint(line);
 }
 
 void handleConsoleLine(char* text) {
     const char* arg;
     char line[120];
-    switch (parseConsoleLine(text, &arg)) {
+    ConsoleCommand cmd = parseConsoleLine(text, &arg);
+    switch (cmd) {
         case ConsoleCommand::Empty:
             break;
         case ConsoleCommand::Help:
@@ -1434,6 +1559,12 @@ void handleConsoleLine(char* text) {
             consolePrint("  ssid=<name>  WLAN-SSID setzen (1-32 Zeichen), gespeichert, verbindet neu");
             consolePrint("  pass=<pw>    WLAN-Passwort setzen (leer oder 8-64 Zeichen), gespeichert, verbindet neu");
             consolePrint("Nach ssid= oder pass= meldet das Display, ob die Verbindung zustande kommt.");
+            consolePrint("  cerbo=<ip>   Adresse des Cerbo GX (Modbus TCP, Port 502)");
+            consolePrint("  motor=<n>    Motorsignal: 0 = aus, sonst Geraete-ID des Digitaleingangs");
+            consolePrint("               (Cerbo: Integrationen > Modbus TCP > Verfuegbare Dienste)");
+            consolePrint("  log=ein / log=aus Protokoll an der Konsole ein/aus (Fehlersuche, nach Neustart aus)");
+            consolePrint("  tcptest=<ip>[:port] Verbindung testen (Fehlersuche, Standard Port 502)");
+            consolePrint("  udp=aus / udp=ein UDP-Empfang anhalten (Fehlersuche)");
             break;
         case ConsoleCommand::Status:
             consoleStatus();
@@ -1454,6 +1585,56 @@ void handleConsoleLine(char* text) {
             saveSettings();
             consolePrintNow("OK: Passwort gespeichert.");
             reconnectFromConsole();
+            break;
+        case ConsoleCommand::CerboHost:
+            if (!validCerboHost(arg)) { consolePrint("FEHLER: Adresse muss 1-39 Zeichen ohne Leerzeichen haben"); break; }
+            consolePrintNow("Adresse des Cerbo wird gespeichert ...");
+            snprintf(settings.cerboHost, sizeof(settings.cerboHost), "%s", arg);
+            saveSettings();
+            cerbo::reset();
+            consolePrint("OK: Adresse gespeichert.");
+            break;
+        case ConsoleCommand::Portal:
+        case ConsoleCommand::MqttPassword:
+            consolePrint("Nicht mehr noetig: das Motorsignal kommt jetzt per Modbus TCP (help).");
+            break;
+        case ConsoleCommand::EngineInput: {
+            uint8_t in;
+            if (!parseEngineInput(arg, in)) { consolePrint("FEHLER: motor=0 (aus) oder motor=<Geraete-ID 1-247>"); break; }
+            consolePrintNow("Motorsignal wird gespeichert ...");
+            settings.engineInput = in;
+            testEngineInput = in;
+            saveSettings();
+            cerbo::reset();
+            if (in) snprintf(line, sizeof(line), "OK: Motorsignal von Geraete-ID %u, Verbindung in etwa 20 s (status).", in);
+            else snprintf(line, sizeof(line), "OK: Motorsignal aus.");
+            consolePrint(line);
+            break;
+        }
+        case ConsoleCommand::TcpTest:
+        case ConsoleCommand::TcpTestClassic: {
+            char host[40];
+            uint16_t port;
+            if (!parseHostPort(arg, host, sizeof(host), port, MODBUS_TCP_PORT)) {
+                consolePrint("FEHLER: tcptest=<ip>[:port], z. B. tcptest=192.168.5.12:502");
+                break;
+            }
+            cerbo::testTcp(host, port, logLine);
+            break;
+        }
+        case ConsoleCommand::Udp:
+            udpBlocked = arg[0] == '0';
+            if (udpBlocked && udpOpen) {
+                chainUdp.stop();
+                n2kUdp.stop();
+                udpOpen = false;
+            }
+            consolePrint(udpBlocked ? "OK: UDP-Empfang aus (bis udp=ein oder Neustart)." : "OK: UDP-Empfang ein.");
+            break;
+        case ConsoleCommand::Log:
+            logOn = arg[0] == '1';
+            cerbo::setLogger(logOn ? logLine : nullptr);
+            consolePrint(logOn ? "OK: Protokoll ein. Jede Sekunde ein Lebenszeichen, dazu jeder Schritt der Cerbo-Verbindung." : "OK: Protokoll aus.");
             break;
         case ConsoleCommand::Unknown:
             snprintf(line, sizeof(line), "FEHLER: unbekannter Befehl '%.60s' (help)", arg);
@@ -1494,25 +1675,58 @@ void appSetup() {
     fullRedraw = true;
 }
 
+// Fuer das Protokoll: Abschnitte der Schleife, die laenger als 300 ms brauchen
+uint32_t sectionStart = 0;
+void sectionBegin() { sectionStart = millis(); }
+void sectionEnd(const char* name) {
+    uint32_t d = millis() - sectionStart;
+    if (logOn && d > 300) applog("langsam: %s %lu ms", name, static_cast<unsigned long>(d));
+}
+
+uint32_t lastHeartbeat = 0;
+bool loggedWifi = false;
+
 void appLoop() {
     uint32_t now = millis();
-    serviceConsole();
-    serviceWifi(now);
-    pollUdp(now);
+    if (logOn && now - lastHeartbeat >= 1000) {
+        lastHeartbeat = now;
+        char st[64];
+        cerbo::status(st, sizeof(st));
+        static const char* const screenNames[] = {"Haupt", "Menue", "Einstellung", "Info"};
+        applog("lebt, WLAN %s, %s, Motorsignal %u: %s", wifiConnected ? "ja" : "nein",
+               screenNames[static_cast<int>(screen)], settings.engineInput, st);
+    }
+    sectionBegin(); serviceConsole(); sectionEnd("Konsole");
+    sectionBegin(); serviceWifi(now); sectionEnd("WLAN");
+    if (logOn && wifiConnected != loggedWifi) applog("WLAN %s", wifiConnected ? "verbunden" : "getrennt");
+    loggedWifi = wifiConnected;
+    sectionBegin(); pollUdp(now); sectionEnd("UDP");
     int key = pollKeys(now);
     if (key >= 0) {
+        if (logOn) applog("Taste %d", key);
         handleKey(key);
         renderNeeded = true;
+        lastKeyAt = now;
     }
     chain.onTick(now);
-    exhaust.update(now, settings.alarmLimit);
+    // Verbindungsaufbau zum Cerbo blockiert einige Sekunden: nur auf der
+    // Hauptseite und wenn seit 10 s keine Taste gedrueckt wurde
+    bool idle = screen == UiScreen::Main && now - lastKeyAt >= 10000;
+    sectionBegin();
+    cerbo::service({settings.engineInput, settings.cerboHost},
+                   wifiConnected, idle, now);
+    sectionEnd("Cerbo");
+    engineGate.onState(settings.engineInput ? cerbo::engineState() : EngineState::Unknown, now);
+    exhaust.update(now, settings.alarmLimit, engineGate.monitorAllowed(exhaust.celsius(), now));
     if (pages.onAlarm(exhaust.alarmActive()) && screen == UiScreen::Main) {
         fullRedraw = true;
         renderNeeded = true;
     }
     serviceBuzzer(now);
     if (renderNeeded || now - lastRender >= 250) {
+        sectionBegin();
         render(now);
+        sectionEnd("Anzeige");
         lastRender = now;
         renderNeeded = false;
     }
