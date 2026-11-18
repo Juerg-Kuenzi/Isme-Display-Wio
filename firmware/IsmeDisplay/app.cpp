@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include <rpcWiFi.h>
+#include "erpc/rpc_system.h"
+#include "erpc/erpc_port.h"
 #include <WiFiUdp.h>
 // Darf nur in einer Datei eingebunden werden. Verwendet wird nur
 // FlashStorageClass mit fester Adresse (siehe Einstellungen im Flash).
@@ -1527,6 +1529,16 @@ void consoleStatus() {
     consolePrint(line);
     snprintf(line, sizeof(line), "Port ChainCounter: %u, Port NMEA2000: %u",
              static_cast<unsigned>(settings.chainPort), static_cast<unsigned>(settings.n2kPort));
+    consolePrint(line);
+    // Firmware des WLAN-Chips (RTL8720DN). Zuletzt, falls die Abfrage haengt.
+    static char rtlVersion[16] = "";
+    if (!rtlVersion[0]) {
+        consolePrintNow("WLAN-Chip FW   : (Abfrage ...)");
+        char* v = rpc_system_version();
+        snprintf(rtlVersion, sizeof(rtlVersion), "%s", v ? v : "?");
+        if (v) erpc_free(v);
+    }
+    snprintf(line, sizeof(line), "WLAN-Chip FW   : %s (benoetigt 2.1.3 oder neuer)", rtlVersion);
     consolePrint(line);
 }
 
